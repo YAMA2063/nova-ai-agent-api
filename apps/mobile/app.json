@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "NOVA AI Agent",
+    "slug": "nova-ai-agent",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "nova",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "android": { "package": "com.nova.aiagent" },
+    "ios": { "bundleIdentifier": "com.nova.aiagent" }
+  }
+}
