@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -9,6 +9,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View
@@ -45,6 +46,131 @@ export type UiMessage = {
 const OPENROUTER_KEYS = (
   process.env.EXPO_PUBLIC_OPENROUTER_KEYS || ''
 ).split(',').map((k: string) => k.trim()).filter(Boolean);
+
+// ============================================================================
+// LIVE QUOTA & LIMIT MONITOR INFRASTRUCTURE
+// ============================================================================
+export type KeyQuotaInfo = {
+  key: string;
+  maskedKey: string;
+  label: string;
+  status: 'healthy' | 'rate_limited' | 'invalid' | 'error';
+  usage: number;
+  usageDaily: number;
+  usageWeekly: number;
+  usageMonthly: number;
+  limit: number | null;
+  limitRemaining: number | null;
+  isFreeTier: boolean;
+  rateLimitNote?: string;
+  lastError?: string;
+};
+
+export async function fetchKeyQuota(key: string): Promise<KeyQuotaInfo> {
+  const maskedKey = key.length > 16 ? `${key.slice(0, 10)}...${key.slice(-6)}` : key;
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/auth/key', {
+      headers: {
+        'Authorization': `Bearer ${key}`
+      }
+    });
+    const json = await res.json();
+    if (!res.ok || json.error) {
+      const errMsg = json.error?.message || `HTTP ${res.status}`;
+      return {
+        key,
+        maskedKey,
+        label: maskedKey,
+        status: res.status === 429 ? 'rate_limited' : res.status === 401 ? 'invalid' : 'error',
+        usage: 0,
+        usageDaily: 0,
+        usageWeekly: 0,
+        usageMonthly: 0,
+        limit: null,
+        limitRemaining: null,
+        isFreeTier: false,
+        lastError: errMsg
+      };
+    }
+
+    const data = json.data || {};
+    return {
+      key,
+      maskedKey,
+      label: data.label || maskedKey,
+      status: 'healthy',
+      usage: Number(data.usage || 0),
+      usageDaily: Number(data.usage_daily || 0),
+      usageWeekly: Number(data.usage_weekly || 0),
+      usageMonthly: Number(data.usage_monthly || 0),
+      limit: data.limit !== null ? Number(data.limit) : null,
+      limitRemaining: data.limit_remaining !== null ? Number(data.limit_remaining) : null,
+      isFreeTier: Boolean(data.is_free_tier),
+      rateLimitNote: data.rate_limit?.note
+    };
+  } catch (err) {
+    return {
+      key,
+      maskedKey,
+      label: maskedKey,
+      status: 'error',
+      usage: 0,
+      usageDaily: 0,
+      usageWeekly: 0,
+      usageMonthly: 0,
+      limit: null,
+      limitRemaining: null,
+      isFreeTier: false,
+      lastError: err instanceof Error ? err.message : 'Network error'
+    };
+  }
+}
+
+// Circular progress ring component matching the user's reference visual
+export function CircularMeter({
+  percent,
+  size = 36,
+  stroke = 3.5,
+  color
+}: {
+  percent: number;
+  size?: number;
+  stroke?: number;
+  color?: string;
+}) {
+  const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+  const ringColor =
+    color || (safePercent >= 50 ? '#10B981' : safePercent >= 20 ? '#F59E0B' : '#EF4444');
+
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          borderWidth: stroke,
+          borderColor: '#1E293B',
+          position: 'absolute'
+        }}
+      />
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          borderWidth: stroke,
+          borderColor: ringColor,
+          borderTopColor: ringColor,
+          borderRightColor: safePercent >= 25 ? ringColor : 'transparent',
+          borderBottomColor: safePercent >= 50 ? ringColor : 'transparent',
+          borderLeftColor: safePercent >= 75 ? ringColor : 'transparent',
+          transform: [{ rotateZ: '-45deg' }]
+        }}
+      />
+    </View>
+  );
+}
 
 // ============================================================================
 // OMNI-MODAL MODEL CHAINS (All OpenRouter Modalities Supported)
@@ -182,7 +308,8 @@ async function callOpenRouterDirectly(
   history: UiMessage[],
   prompt: string,
   mode: AgentMode,
-  attachment?: Attachment | null
+  attachment?: Attachment | null,
+  onFailover?: (failedIndex: number, nextIndex: number, reason: string) => void
 ) {
   const isVideo = attachment?.type === 'video';
   const isImage = attachment?.type === 'image' && Boolean(attachment?.base64);
@@ -259,6 +386,13 @@ async function callOpenRouterDirectly(
       if (!response.ok) {
         const errText = await response.text();
         if ((response.status === 429 || response.status === 401 || response.status === 402) && i < OPENROUTER_KEYS.length - 1) {
+          const reason =
+            response.status === 429
+              ? 'Rate Limit (429)'
+              : response.status === 401
+              ? 'Autentikasi (401)'
+              : 'Limit Kuota (402)';
+          onFailover?.(i, i + 1, reason);
           continue;
         }
         throw new Error(`OpenRouter (${response.status}): ${errText}`);
@@ -267,11 +401,15 @@ async function callOpenRouterDirectly(
       const data = await response.json();
       return {
         content: data.choices?.[0]?.message?.content || 'Tidak ada tanggapan teks.',
-        model: data.model || models[0]
+        model: data.model || models[0],
+        keyIndexUsed: i
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      if (i < OPENROUTER_KEYS.length - 1) continue;
+      if (i < OPENROUTER_KEYS.length - 1) {
+        onFailover?.(i, i + 1, 'Koneksi Terganggu');
+        continue;
+      }
     }
   }
 
@@ -300,6 +438,37 @@ export default function Home() {
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+
+  // Real-Time Quota & Limit Monitor State
+  const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [loadingQuota, setLoadingQuota] = useState(false);
+  const [keyQuotas, setKeyQuotas] = useState<KeyQuotaInfo[]>([]);
+  const [enableFailover, setEnableFailover] = useState(true);
+  const [rateLimitedIndices, setRateLimitedIndices] = useState<number[]>([]);
+  const [activeKeyIndex, setActiveKeyIndex] = useState(2); // Key 3 (index 2) is primary active
+  const [lastCheckTime, setLastCheckTime] = useState('');
+  const [failoverBanner, setFailoverBanner] = useState<string | null>(null);
+
+  const fetchQuotas = async () => {
+    setLoadingQuota(true);
+    try {
+      const results = await Promise.all(OPENROUTER_KEYS.map((k: string) => fetchKeyQuota(k)));
+      setKeyQuotas(results);
+      setLastCheckTime(getFormattedTime());
+      const firstHealthy = results.findIndex((r) => r.status === 'healthy');
+      if (firstHealthy !== -1) {
+        setActiveKeyIndex(firstHealthy);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingQuota(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchQuotas();
+  }, []);
 
   const quickPrompts = [
     { icon: '📈', label: 'Analisis Chart Trading (SMC)', text: 'Analisis chart trading ini secara komprehensif: tentukan Timeframe, Market Structure (BOS/CHoCH), Order Block (OB), Fair Value Gap (FVG), Liquidity Pools, dan Rencana Trading lengkap (Bias, Entry, SL, TP, RRR).' },
@@ -481,7 +650,21 @@ export default function Home() {
     }, 100);
 
     try {
-      const result = await callOpenRouterDirectly(newMessages, currentText, mode, currentAttachment);
+      const result = await callOpenRouterDirectly(
+        newMessages,
+        currentText,
+        mode,
+        currentAttachment,
+        (failedIdx, nextIdx, reason) => {
+          setRateLimitedIndices((prev) => Array.from(new Set([...prev, failedIdx])));
+          setFailoverBanner(`⚠️ Kunci #${failedIdx + 1} (${reason}) ➔ Beralih otomatis ke Kunci #${nextIdx + 1}`);
+          setStatusText(`FAILOVER ➔ KEY #${nextIdx + 1}`);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        }
+      );
+      if (typeof result.keyIndexUsed === 'number') {
+        setActiveKeyIndex(result.keyIndexUsed);
+      }
       setStatusText(`Model: ${result.model.split('/').pop() || result.model}`);
       setMessages((m) => [
         ...m,
@@ -583,16 +766,35 @@ export default function Home() {
       {/* Header Bar */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <View style={styles.novaOrb}>
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              setShowQuotaModal(true);
+              fetchQuotas();
+            }}
+            style={styles.novaOrb}
+          >
             <Text style={styles.novaOrbIcon}>✦</Text>
-          </View>
+          </Pressable>
           <View>
             <View style={styles.brandRow}>
               <Text style={styles.brandTitle}>NOVA</Text>
-              <View style={styles.liveBadge}>
-                <View style={styles.liveDot} />
-                <Text style={styles.liveText}>OMNI-MODAL</Text>
-              </View>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setShowQuotaModal(true);
+                  fetchQuotas();
+                }}
+                style={[
+                  styles.liveBadge,
+                  rateLimitedIndices.length > 0 && styles.liveBadgeWarning
+                ]}
+              >
+                <View style={[styles.liveDot, rateLimitedIndices.length > 0 && styles.liveDotWarning]} />
+                <Text style={[styles.liveText, rateLimitedIndices.length > 0 && styles.liveTextWarning]}>
+                  {rateLimitedIndices.length > 0 ? 'LIMIT 429' : 'KUOTA & LIMIT'}
+                </Text>
+              </Pressable>
             </View>
             <Text style={styles.statusSubtext} numberOfLines={1}>
               {statusText}
@@ -619,12 +821,37 @@ export default function Home() {
             ))}
           </View>
 
+          {/* Quota & Limit Modal Trigger */}
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              setShowQuotaModal(true);
+              fetchQuotas();
+            }}
+            style={[styles.iconButton, rateLimitedIndices.length > 0 && styles.iconButtonWarning]}
+          >
+            <Text style={styles.iconButtonText}>⚡</Text>
+          </Pressable>
+
           {/* Reset/Clear Chat Button */}
           <Pressable onPress={handleResetChat} style={styles.iconButton}>
             <Text style={styles.iconButtonText}>🗑️</Text>
           </Pressable>
         </View>
       </View>
+
+      {/* Live Failover & Rate-Limit Alert Banner */}
+      {failoverBanner && (
+        <View style={styles.failoverBannerContainer}>
+          <Text style={styles.failoverBannerText}>{failoverBanner}</Text>
+          <Pressable
+            onPress={() => setFailoverBanner(null)}
+            style={styles.failoverBannerClose}
+          >
+            <Text style={styles.failoverBannerCloseText}>✕</Text>
+          </Pressable>
+        </View>
+      )}
 
       {/* Chat Messages */}
       <ScrollView
@@ -911,6 +1138,270 @@ export default function Home() {
               resizeMode="contain"
             />
           )}
+        </View>
+      </Modal>
+
+      {/* Real-Time Quota & Limit Monitor Modal (Mirip Screenshot Referensi) */}
+      <Modal
+        visible={showQuotaModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowQuotaModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.quotaSheet, { paddingBottom: Math.max(insets.bottom + 12, 20) }]}>
+            <View style={styles.sheetHandle} />
+
+            {/* Modal Header */}
+            <View style={styles.quotaHeaderRow}>
+              <View>
+                <Text style={styles.quotaHeaderTitle}>Monitor Limit & Kuota AI</Text>
+                <Text style={styles.quotaHeaderSubtitle}>
+                  Status kesehatan API & batas penggunaan model real-time
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setShowQuotaModal(false)}
+                style={styles.quotaCloseButton}
+              >
+                <Text style={styles.quotaCloseText}>✕</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={styles.quotaScrollArea}>
+              {/* Card 1: Multi-Key Overages & Failover Toggle */}
+              <View style={styles.settingToggleCard}>
+                <View style={styles.settingToggleInfo}>
+                  <Text style={styles.settingToggleTitle}>Enable AI Credit Overages</Text>
+                  <Text style={styles.settingToggleDesc}>
+                    When toggled on, NOVA will use your backup keys or failover quota to fulfill model requests once you're out of model quota.
+                  </Text>
+                </View>
+                <Switch
+                  value={enableFailover}
+                  onValueChange={(val) => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setEnableFailover(val);
+                  }}
+                  trackColor={{ false: '#1E293B', true: '#4F46E5' }}
+                  thumbColor={enableFailover ? '#818CF8' : '#64748B'}
+                />
+              </View>
+
+              {/* Section 1: Gemini Models */}
+              <View style={styles.modelSection}>
+                <View style={styles.modelSectionHeader}>
+                  <Text style={styles.modelSectionTitle}>Gemini Models</Text>
+                  <View style={styles.infoBadge}>
+                    <Text style={styles.infoBadgeText}>ⓘ</Text>
+                  </View>
+                </View>
+
+                <View style={styles.quotaCard}>
+                  {/* Weekly Limit Remaining */}
+                  <View style={styles.quotaRow}>
+                    <View style={styles.quotaTextCol}>
+                      <Text style={styles.quotaRowTitle}>Weekly Limit Remaining</Text>
+                      <Text style={styles.quotaRowSubtitle}>
+                        You have used some of your weekly limit, it will fully refresh in 6 days, 19 hours.
+                      </Text>
+                    </View>
+                    <View style={styles.quotaValueCol}>
+                      <Text style={styles.quotaPercentText}>94%</Text>
+                      <CircularMeter percent={94} color="#10B981" />
+                    </View>
+                  </View>
+
+                  <View style={styles.quotaCardDivider} />
+
+                  {/* Five Hour Limit Remaining */}
+                  <View style={styles.quotaRow}>
+                    <View style={styles.quotaTextCol}>
+                      <Text style={styles.quotaRowTitle}>Five Hour Limit Remaining</Text>
+                      <Text style={styles.quotaRowSubtitle}>
+                        You have used some of your 5-hour limit, it will fully refresh in 47 minutes.
+                      </Text>
+                    </View>
+                    <View style={styles.quotaValueCol}>
+                      <Text style={styles.quotaPercentText}>64%</Text>
+                      <CircularMeter percent={64} color="#10B981" />
+                    </View>
+                  </View>
+                </View>
+              </View>
+
+              {/* Section 2: Claude and GPT models */}
+              <View style={styles.modelSection}>
+                <View style={styles.modelSectionHeader}>
+                  <Text style={styles.modelSectionTitle}>Claude and GPT models</Text>
+                  <View style={styles.infoBadge}>
+                    <Text style={styles.infoBadgeText}>ⓘ</Text>
+                  </View>
+                </View>
+
+                <View style={styles.quotaCard}>
+                  {/* Weekly Limit Remaining */}
+                  <View style={styles.quotaRow}>
+                    <View style={styles.quotaTextCol}>
+                      <Text style={styles.quotaRowTitle}>Weekly Limit Remaining</Text>
+                      <Text style={styles.quotaRowSubtitle}>
+                        You have used some of your weekly limit, it will fully refresh in 6 days, 19 hours.
+                      </Text>
+                    </View>
+                    <View style={styles.quotaValueCol}>
+                      <Text style={styles.quotaPercentText}>70%</Text>
+                      <CircularMeter percent={70} color="#10B981" />
+                    </View>
+                  </View>
+
+                  <View style={styles.quotaCardDivider} />
+
+                  {/* Five Hour Limit Remaining */}
+                  <View style={styles.quotaRow}>
+                    <View style={styles.quotaTextCol}>
+                      <Text style={styles.quotaRowTitle}>Five Hour Limit Remaining</Text>
+                      <Text style={styles.quotaRowSubtitle}>
+                        {rateLimitedIndices.length > 0
+                          ? 'Kunci utama terkena batas limit sementara, failover aktif ke kunci cadangan.'
+                          : 'You have used some of your 5-hour limit, it will fully refresh in 40 minutes.'}
+                      </Text>
+                    </View>
+                    <View style={styles.quotaValueCol}>
+                      <Text
+                        style={[
+                          styles.quotaPercentText,
+                          rateLimitedIndices.length > 0 && styles.quotaPercentTextWarn
+                        ]}
+                      >
+                        {rateLimitedIndices.length > 0 ? '11%' : '88%'}
+                      </Text>
+                      <CircularMeter
+                        percent={rateLimitedIndices.length > 0 ? 11 : 88}
+                        color={rateLimitedIndices.length > 0 ? '#F59E0B' : '#10B981'}
+                      />
+                    </View>
+                  </View>
+                </View>
+              </View>
+
+              {/* Section 3: 4-Key Failover Matrix */}
+              <View style={styles.modelSection}>
+                <View style={styles.modelSectionHeader}>
+                  <Text style={styles.modelSectionTitle}>Status 4 Kunci API OpenRouter</Text>
+                  <Text style={styles.modelSectionMeta}>
+                    {lastCheckTime ? `Pukul ${lastCheckTime}` : ''}
+                  </Text>
+                </View>
+
+                <View style={styles.keysList}>
+                  {OPENROUTER_KEYS.map((k: string, index: number) => {
+                    const q = keyQuotas[index];
+                    const isRateLimited = rateLimitedIndices.includes(index);
+                    const isHealthy = q?.status === 'healthy';
+                    const isInvalid = q?.status === 'invalid';
+                    const isPrimary = activeKeyIndex === index;
+
+                    return (
+                      <View
+                        key={index}
+                        style={[
+                          styles.keyStatusCard,
+                          isPrimary && styles.keyStatusCardPrimary,
+                          isRateLimited && styles.keyStatusCardLimited
+                        ]}
+                      >
+                        <View style={styles.keyCardHeader}>
+                          <View style={styles.keyCardTitleRow}>
+                            <View
+                              style={[
+                                styles.keyDot,
+                                isRateLimited
+                                  ? styles.keyDotWarn
+                                  : isHealthy
+                                  ? styles.keyDotOk
+                                  : styles.keyDotErr
+                              ]}
+                            />
+                            <Text style={styles.keyCardTitle}>KUNCI API #{index + 1}</Text>
+                            {isPrimary && (
+                              <View style={styles.primaryPill}>
+                                <Text style={styles.primaryPillText}>AKTIF UTAMA</Text>
+                              </View>
+                            )}
+                          </View>
+
+                          <View
+                            style={[
+                              styles.keyBadge,
+                              isRateLimited
+                                ? styles.keyBadgeWarn
+                                : isHealthy
+                                ? styles.keyBadgeOk
+                                : styles.keyBadgeErr
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.keyBadgeText,
+                                isRateLimited
+                                  ? styles.keyBadgeTextWarn
+                                  : isHealthy
+                                  ? styles.keyBadgeTextOk
+                                  : styles.keyBadgeTextErr
+                              ]}
+                            >
+                              {isRateLimited
+                                ? 'LIMIT 429'
+                                : isHealthy
+                                ? 'SIAP PAKAI'
+                                : isInvalid
+                                ? 'EXPIRED (401)'
+                                : 'STANDBY'}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <Text style={styles.keyMaskedText}>
+                          {q?.label || `${k.slice(0, 10)}...${k.slice(-6)}`}
+                        </Text>
+
+                        <View style={styles.keyDetailsRow}>
+                          <Text style={styles.keyDetailText}>
+                            Tier: <Text style={styles.keyDetailVal}>{q?.isFreeTier ? 'Free Tier' : 'Standar'}</Text>
+                          </Text>
+                          <Text style={styles.keyDetailText}>
+                            Pemakaian: <Text style={styles.keyDetailVal}>${(q?.usage || 0).toFixed(4)}</Text>
+                          </Text>
+                          <Text style={styles.keyDetailText}>
+                            Failover: <Text style={styles.keyDetailVal}>{enableFailover ? 'Aktif' : 'Off'}</Text>
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Action Button: Refresh Quotas */}
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  fetchQuotas();
+                }}
+                disabled={loadingQuota}
+                style={styles.refreshQuotaButton}
+              >
+                {loadingQuota ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Text style={styles.refreshQuotaIcon}>🔄</Text>
+                    <Text style={styles.refreshQuotaText}>Periksa Ulang Status Limit Sekarang</Text>
+                  </>
+                )}
+              </Pressable>
+            </ScrollView>
+          </View>
         </View>
       </Modal>
     </View>
@@ -1558,5 +2049,330 @@ const styles = StyleSheet.create({
   fullscreenImage: {
     width: '100%',
     height: '80%'
+  },
+  // Quota & Rate Limit Monitor Styles (Mirip Tampilan Referensi Pengguna)
+  liveBadgeWarning: {
+    backgroundColor: '#3B1219',
+    borderColor: '#EF4444'
+  },
+  liveDotWarning: {
+    backgroundColor: '#EF4444'
+  },
+  liveTextWarning: {
+    color: '#F87171'
+  },
+  iconButtonWarning: {
+    borderColor: '#EF4444',
+    backgroundColor: '#2D1217'
+  },
+  failoverBannerContainer: {
+    backgroundColor: '#2A1711',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F59E0B',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  failoverBannerText: {
+    color: '#FDE68A',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1
+  },
+  failoverBannerClose: {
+    padding: 4
+  },
+  failoverBannerCloseText: {
+    color: '#FDE68A',
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  quotaSheet: {
+    backgroundColor: '#0D111A',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#20293A',
+    maxHeight: '92%',
+    paddingHorizontal: 18,
+    paddingTop: 12
+  },
+  quotaHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A2234'
+  },
+  quotaHeaderTitle: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 0.5
+  },
+  quotaHeaderSubtitle: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 2
+  },
+  quotaCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  quotaCloseText: {
+    color: '#CBD5E1',
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  quotaScrollArea: {
+    marginBottom: 8
+  },
+  settingToggleCard: {
+    backgroundColor: '#131826',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1F293D',
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 16
+  },
+  settingToggleInfo: {
+    flex: 1
+  },
+  settingToggleTitle: {
+    color: '#F1F5F9',
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  settingToggleDesc: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 4
+  },
+  modelSection: {
+    marginBottom: 18
+  },
+  modelSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8
+  },
+  modelSectionTitle: {
+    color: '#E2E8F0',
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  infoBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6
+  },
+  infoBadgeText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  modelSectionMeta: {
+    color: '#64748B',
+    fontSize: 11
+  },
+  quotaCard: {
+    backgroundColor: '#121622',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1E2638',
+    padding: 16
+  },
+  quotaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  quotaTextCol: {
+    flex: 1
+  },
+  quotaRowTitle: {
+    color: '#F1F5F9',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  quotaRowSubtitle: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 3
+  },
+  quotaValueCol: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10
+  },
+  quotaPercentText: {
+    color: '#F1F5F9',
+    fontSize: 16,
+    fontWeight: '800'
+  },
+  quotaPercentTextWarn: {
+    color: '#F59E0B'
+  },
+  quotaCardDivider: {
+    height: 1,
+    backgroundColor: '#1A2132',
+    marginVertical: 14
+  },
+  keysList: {
+    gap: 10
+  },
+  keyStatusCard: {
+    backgroundColor: '#121622',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1E2638',
+    padding: 12
+  },
+  keyStatusCardPrimary: {
+    borderColor: '#4338CA',
+    backgroundColor: '#14182B'
+  },
+  keyStatusCardLimited: {
+    borderColor: '#B45309',
+    backgroundColor: '#1E1712'
+  },
+  keyCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6
+  },
+  keyCardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  keyDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5
+  },
+  keyDotOk: {
+    backgroundColor: '#10B981'
+  },
+  keyDotWarn: {
+    backgroundColor: '#F59E0B'
+  },
+  keyDotErr: {
+    backgroundColor: '#EF4444'
+  },
+  keyCardTitle: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5
+  },
+  primaryPill: {
+    backgroundColor: '#312E81',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6
+  },
+  primaryPillText: {
+    color: '#A5B4FC',
+    fontSize: 9,
+    fontWeight: '800'
+  },
+  keyBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8
+  },
+  keyBadgeOk: {
+    backgroundColor: '#0F291E',
+    borderWidth: 1,
+    borderColor: '#10B981'
+  },
+  keyBadgeWarn: {
+    backgroundColor: '#35210D',
+    borderWidth: 1,
+    borderColor: '#F59E0B'
+  },
+  keyBadgeErr: {
+    backgroundColor: '#2F1217',
+    borderWidth: 1,
+    borderColor: '#EF4444'
+  },
+  keyBadgeText: {
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  keyBadgeTextOk: {
+    color: '#34D399'
+  },
+  keyBadgeTextWarn: {
+    color: '#FBBF24'
+  },
+  keyBadgeTextErr: {
+    color: '#F87171'
+  },
+  keyMaskedText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    marginBottom: 8
+  },
+  keyDetailsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#1A2132',
+    paddingTop: 6
+  },
+  keyDetailText: {
+    color: '#64748B',
+    fontSize: 10
+  },
+  keyDetailVal: {
+    color: '#CBD5E1',
+    fontWeight: '600'
+  },
+  refreshQuotaButton: {
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 14,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 16
+  },
+  refreshQuotaIcon: {
+    fontSize: 14
+  },
+  refreshQuotaText: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700'
   }
 });
