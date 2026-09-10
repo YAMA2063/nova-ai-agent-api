@@ -108,14 +108,14 @@ SOP: H4 (Bias) ➡️ M15 (Setup) ➡️ M5 (Eksekusi). Jika arah timeframe bert
 - Hukum Besi Kripto: Bitcoin adalah indeks utama. Algoritma bot mengikat seluruh altcoin ke pergerakan BTC.
 - Selalu cek Cuaca BTC sebelum analisa altcoin. DILARANG Long altcoin jika BTC sedang breakdown/dump agresif!`;
 
-// Model chains with auto-cascading free fallback
+// Model chains with auto-cascading free fallback (Free models first for instant 200 OK)
 const TEXT_MODELS: Record<AgentMode, string[]> = {
   max: [
-    'openai/gpt-6-astra',
-    'anthropic/claude-sonnet-5',
     'nvidia/nemotron-3-super-120b-a12b:free',
     'nex-agi/nex-n2.5-pro:free',
-    'liquid/lfm-2.5-2.6b:free'
+    'liquid/lfm-2.5-2.6b:free',
+    'openai/gpt-6-astra',
+    'anthropic/claude-sonnet-5'
   ],
   fast: [
     'liquid/lfm-2.5-2.6b:free',
@@ -126,9 +126,9 @@ const TEXT_MODELS: Record<AgentMode, string[]> = {
   auto: [
     'nvidia/nemotron-3-super-120b-a12b:free',
     'nex-agi/nex-n2.5-pro:free',
+    'liquid/lfm-2.5-2.6b:free',
     'anthropic/claude-sonnet-5',
-    'openai/gpt-6-astra',
-    'liquid/lfm-2.5-2.6b:free'
+    'openai/gpt-6-astra'
   ]
 };
 
@@ -535,10 +535,6 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
   // Call OpenRouter
   const callOpenRouter = async (history: UiMessage[], promptText: string, cMode: 'general' | 'trading', aMode: AgentMode, attach?: any) => {
     const models = TEXT_MODELS[aMode] || TEXT_MODELS.auto;
-    const formattedHistory = history.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content
-    }));
 
     let currentContent: any = promptText;
     if (attach?.base64) {
@@ -554,9 +550,17 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
       ];
     }
 
+    // Only include valid conversation turns; exclude duplicate prompt, initial welcome, and error banners
+    const cleanHistory = history
+      .filter((m) => !m.content.startsWith('⚠️') && m.id !== 'init_welcome' && m.content !== promptText)
+      .map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content
+      }));
+
     const messages = [
       { role: 'system', content: cMode === 'trading' ? NEUROBRO_TRADING_PROMPT : GENERAL_SYSTEM_PROMPT },
-      ...formattedHistory,
+      ...cleanHistory,
       { role: 'user', content: currentContent }
     ];
 
@@ -570,7 +574,6 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
             headers: {
               'Authorization': `Bearer ${key}`,
               'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://github.com/nova-ai-agent',
               'X-Title': 'NOVA Web'
             },
             body: JSON.stringify({
@@ -582,9 +585,11 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
           });
 
           if (!res.ok) {
-            // 402 = Insufficient credits on paid model, 429 = Rate limit, 404 = Model offline, 401 = Key error
+            const errText = await res.text().catch(() => '');
+            console.warn(`[OpenRouter] ${modelCandidate} failed with HTTP ${res.status}:`, errText);
+            lastErr = new Error(`HTTP ${res.status}: ${errText.slice(0, 120)}`);
             if ([400, 401, 402, 404, 429].includes(res.status)) continue;
-            throw new Error(`HTTP ${res.status}`);
+            throw lastErr;
           }
 
           const data = await res.json();
