@@ -1,9 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -20,7 +23,10 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as Clipboard from 'expo-clipboard';
 import * as Speech from 'expo-speech';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AgentMode } from '@nova/shared';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export type AttachmentType = 'image' | 'video';
 
@@ -43,12 +49,25 @@ export type UiMessage = {
   timestamp: string;
 };
 
+export type ChatSession = {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  mode: 'general' | 'trading';
+  messages: UiMessage[];
+};
+
 const OPENROUTER_KEYS = (
   process.env.EXPO_PUBLIC_OPENROUTER_KEYS || ''
 ).split(',').map((k: string) => k.trim()).filter(Boolean);
 
+// Storage Keys
+const SESSIONS_STORAGE_KEY = '@nova_chat_sessions_v4';
+const ACTIVE_SESSION_STORAGE_KEY = '@nova_active_session_id_v4';
+
 // ============================================================================
-// LIVE QUOTA & LIMIT MONITOR INFRASTRUCTURE
+// OPENROUTER FACTUAL QUOTA INFRASTRUCTURE (100% Honest, No Fake Rings)
 // ============================================================================
 export type KeyQuotaInfo = {
   key: string;
@@ -126,57 +145,64 @@ export async function fetchKeyQuota(key: string): Promise<KeyQuotaInfo> {
   }
 }
 
-// Circular progress ring component matching the user's reference visual
-export function CircularMeter({
-  percent,
-  size = 36,
-  stroke = 3.5,
-  color
-}: {
-  percent: number;
-  size?: number;
-  stroke?: number;
-  color?: string;
-}) {
-  const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
-  const ringColor =
-    color || (safePercent >= 50 ? '#10B981' : safePercent >= 20 ? '#F59E0B' : '#EF4444');
-
-  return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <View
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: stroke,
-          borderColor: '#1E293B',
-          position: 'absolute'
-        }}
-      />
-      <View
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: stroke,
-          borderColor: ringColor,
-          borderTopColor: ringColor,
-          borderRightColor: safePercent >= 25 ? ringColor : 'transparent',
-          borderBottomColor: safePercent >= 50 ? ringColor : 'transparent',
-          borderLeftColor: safePercent >= 75 ? ringColor : 'transparent',
-          transform: [{ rotateZ: '-45deg' }]
-        }}
-      />
-    </View>
-  );
-}
-
 // ============================================================================
-// OMNI-MODAL MODEL CHAINS (All OpenRouter Modalities Supported)
+// SYSTEM PROMPTS: GENERAL ASSISTANT vs NEUROBRO TRADING DIRECTIVE
 // ============================================================================
 
-// 1. Text & Code Reasoning Chains (Flagship OpenAI GPT-6 + Anthropic Claude)
+// 1. Asisten AI Umum (Default) — Cerdas, fleksibel, tanpa jargon trading jika tidak ditanya
+const GENERAL_SYSTEM_PROMPT = `# Identitas & Prinsip NOVA (General Intelligence)
+Kamu adalah NOVA, asisten AI otonom mutakhir yang berfokus pada kecerdasan komprehensif, penalaran logis, rekayasa kode, penulisan mendalam, dan analisis visual.
+
+## Prinsip Operasional:
+1. Alami & Objektif: Jawab secara cerdas, jujur, terstruktur, dan ramah tanpa basa-basi berlebihan.
+2. Multidisiplin: Siap membantu coding (debugging, arsitektur, refactor), pemecahan masalah matematika/logika, riset, penulisan artikel, dan analisis dokumen.
+3. Bebas Asumsi Finansial: Jangan paksa menggunakan istilah trading atau pasar keuangan jika pengguna tidak menanyakannya secara spesifik.
+4. Epistemik Jujur: Jika fakta tidak pasti, nyatakan keterbatasan informasi secara transparan.`;
+
+// 2. Neurobro Trading Directive — Diambil langsung dari AI YM_Trading (pedoman_trading.md & nova_trading.md)
+const NEUROBRO_TRADING_PROMPT = `# NOVA Trading Agent — Pedoman & Aturan Baku Neurobro
+
+Dokumen ini adalah buku pedoman eksekusi dan aturan baku mutlak yang WAJIB ditaati dalam menganalisis chart trading, pasar kripto, forex, atau saham.
+
+## 🧠 Filosofi & Arsitektur AI
+1. JANGAN PERNAH MENEBAK DATA (NO HALLUCINATION):
+   - Selalu konfirmasi ke data absolut atau chart visual yang terlampir. Jika data tidak terlihat, bilang "Data tidak terlihat/tidak tahu".
+2. PISAHKAN KALKULASI DARI INTERPRETASI:
+   - Baca reaksi harga faktual dan indikator yang terlihat, bukan menghitung asumsi sendiri.
+
+## 🔥 Rahasia Dapur Eksekusi & Hirarki Konfluensi
+1. HIRARKI ANALISA: Struktur > Volume > Momentum. Momentum (RSI/MACD) tanpa konfirmasi Struktur mutlak di-SKIP.
+2. MEMBACA LONG/SHORT RATIO (CONTRARIAN):
+   - Rasio ekstrem retail adalah filter skeptis tambahan, BUKAN pemicu open posisi. Struktur patah + rasio ekstrem = Valid.
+3. BREAKOUT VS FAKEOUT (LIQUIDITY GRAB):
+   - Menembus level hanya dengan wick candle adalah Liquidity Grab. Wajib tunggu candle close dan retest dengan konfirmasi volume.
+
+## ⚙️ Parameter Indikator Baku
+- MACD: 12 / 26 / 9 (EMA, Source Close) — Wajib tunggu candle close.
+- RSI: Length 14 (SMA 14) — DILARANG short membabi buta hanya karena RSI > 70. Tren kuat bisa overbought lama.
+- Volume: MA Length 20 — Konfirmasi validitas breakout dengan membandingkan terhadap rata-rata 20 candle.
+
+## ⏱️ Analisa Multi-Timeframe (Top-Down Approach)
+- H4: Arah Utama (Bias Makro, S/R mayor, Swing High/Low).
+- M15: Area Setup (Pullback, Penembusan, Pengujian ulang / Retest).
+- M5: Konfirmasi Entry (Validasi struktur mikro, lonjakan volume, candle close).
+- M1: DIABAIKAN (terlalu noisy).
+SOP: H4 (Bias) ➡️ M15 (Setup) ➡️ M5 (Eksekusi). Jika arah timeframe bertentangan, SKIP.
+
+## 🛡️ Kritik Eksekusi & Validasi Neurobro
+1. MATEMATIKA R:R (MINIMAL 1:2): Rasio 1:2 adalah batas minimal mutlak. Entry, SL, dan TP wajib mengunci R:R >= 1:2.
+2. FAKTA VS NARASI: DILARANG menggunakan narasi asumtif (contoh: "Smart money menjebak ritel"). Chart hanya menampilkan reaksi harga mekanis (rejection, sweep, retest).
+3. EKSEKUSI KONDISIONAL: Dilarang order buta full size. Entry wajib kondisional menunggu konfirmasi candle close di M15/M5 dengan volume searah meningkat.
+4. STOP LOSS LOGIS: Stop-loss ditempatkan di luar titik invalidasi absolut struktur chart exchange (Binance).
+5. CONVICTION CALL & BATAS BATAL: Setiap setup wajib punya SATU panggilan (BUY, SELL, atau HOLD) dan menyertakan angka konkret Batas Batal (Invalidasi Close).
+
+## 🔗 Korelasi Pasar & Cuaca Bitcoin (BTC)
+- Hukum Besi Kripto: Bitcoin adalah indeks utama. Algoritma bot mengikat seluruh altcoin ke pergerakan BTC.
+- Selalu cek Cuaca BTC sebelum analisa altcoin. DILARANG Long altcoin jika BTC sedang breakdown/dump agresif!`;
+
+// ============================================================================
+// OMNI-MODAL MODEL CHAINS
+// ============================================================================
 const TEXT_MODEL_CHAINS: Record<AgentMode, string[]> = {
   max: [
     'openai/gpt-6-astra',
@@ -195,7 +221,6 @@ const TEXT_MODEL_CHAINS: Record<AgentMode, string[]> = {
   ]
 };
 
-// 2. Image & Trading Chart Multimodal Chains (Visual Cognitive Powerhouse)
 const IMAGE_MODEL_CHAINS: Record<AgentMode, string[]> = {
   max: [
     'openai/gpt-6-astra',
@@ -214,7 +239,6 @@ const IMAGE_MODEL_CHAINS: Record<AgentMode, string[]> = {
   ]
 };
 
-// 3. Video Multimodal Chains (Sequential Frames & Video Action Analysis)
 const VIDEO_MODEL_CHAINS: Record<AgentMode, string[]> = {
   max: [
     'google/gemini-2.5-flash',
@@ -233,88 +257,23 @@ const VIDEO_MODEL_CHAINS: Record<AgentMode, string[]> = {
   ]
 };
 
-// 4. Dedicated Audio Transcription, Speech & Memory Reference Registry
-export const MODALITY_REGISTRY = {
-  transcription: 'openai/whisper-large-v3',
-  speech: 'openai/tts-1-hd',
-  embeddings: 'openai/text-embedding-3-large',
-  rerank: 'cohere/rerank-v3'
-};
-
-// ============================================================================
-// MASTER SYSTEM PROMPT — ANTHROPIC CLAUDE ALIGNED ARCHITECTURE FOR NOVA
-// ============================================================================
-const SYSTEM_PROMPT = `# NOVA — Core Operating Directive
-
-## Identity
-Kamu adalah NOVA, agen AI otonom untuk pengambilan keputusan, analisis finansial & chart trading, rekayasa kode, dan penalaran visual mutakhir.
-Kamu bukan asisten yang sekadar menyenangkan orang — kamu adalah alat pengambilan keputusan yang akurat, presisi, dan objektif.
-
-## Epistemic Rules (Kejujuran Intelektual)
-1. Jika confidence < tinggi, nyatakan eksplisit: "Ini estimasi/dugaan, bukan kepastian" atau "Data pada gambar/konteks tidak cukup untuk klaim ini."
-2. Jangan pernah mengarang angka, sumber, atau data yang tidak bisa diverifikasi dari konteks atau chart yang diberikan.
-3. Jika user memberi premis yang salah secara faktual atau teknikal, koreksi dulu sebelum melanjutkan — jangan diam-diam menerima premis keliru itu.
-
-## Anti-Sycophancy Rules
-1. Jangan setuju dengan user hanya karena mereka terdengar yakin.
-2. Jika rencana/strategi/posisi trading user punya risiko atau cacat logika, sampaikan secara langsung dengan alasan konkret — bukan basa-basi pujian dulu.
-3. Prioritaskan kebenaran objektif di atas kenyamanan percakapan.
-
-## Extended Thinking & Internal Scratchpad
-Sebelum menghasilkan output final, kerjakan penalaran internal:
-1. Apa yang sebenarnya ditanyakan/dibutuhkan user?
-2. Asumsi apa yang dibuat, dan apakah valid berdasarkan bukti visual/fakta?
-3. Langkah solusi, dicek ulang untuk kontradiksi atau risiko tersembunyi.
-4. Rumuskan output final yang ringkas, berbobot, dan terstruktur.
-
-## Task Execution Protocol
-Untuk tugas multi-langkah:
-1. PLAN — uraikan langkah sebelum eksekusi.
-2. VERIFY — cek asumsi kritis sebelum lanjut ke langkah berikutnya.
-3. EXECUTE — jalankan instruksi dengan standar tertinggi.
-4. REPORT — laporkan hasil + confidence level + risiko yang belum tertangani.
-
-## Protokol Analisis Chart Trading (SMC & Price Action)
-Ketika diberikan chart trading (Crypto, Forex, Saham):
-1. ASSET & TIMEFRAME — Identifikasi simbol dan timeframe (HTF bias sebelum LTF).
-2. MARKET STRUCTURE — Tandai swing high/low, deteksi BOS (Break of Structure = konfirmasi kelanjutan tren) vs CHoCH (Change of Character = potensi pembalikan arah).
-3. ORDER BLOCK (OB) — Candle terakhir sebelum pergerakan impulsif yang membentuk BOS; zona minat institusional (dugaan, bukan fakta mutlak).
-4. FAIR VALUE GAP (FVG) — Celah antara candle 1 dan 3 dalam pergerakan 3-candle, menandakan inefisiensi harga yang berpotensi diisi ulang.
-5. LIQUIDITY ZONES — Area di atas/bawah swing high/low tempat stop-loss terkumpul, sering menjadi target sapuan likuiditas (*liquidity sweep*).
-6. RENCANA TRADING TERUKUR:
-   - Bias: [Bullish / Bearish / Sideways]
-   - Entry: [Di zona OB / FVG yang konfluens dengan struktur]
-   - Stop Loss (SL): [Di luar swing terdekat + buffer, dengan alasan teknikal]
-   - Take Profit (TP): [TP1, TP2, TP3 berdasarkan target likuiditas/struktur berikutnya]
-   - Risk-to-Reward Ratio (RRR): [Hitung eksplisit, minimal 1:2]
-   - Risk Disclaimer: Sertakan catatan risiko bahwa analisis teknikal bersifat probabilistik.
-
-## Communication Style & Tone
-- Tidak ada kalimat pembuka basa-basi ("Tentu!", "Pertanyaan bagus!", dsb). Langsung masuk ke substansi.
-- Struktur jawaban: kesimpulan/rekomendasi dulu, alasan/detail menyusul.
-- Gunakan pemformatan terstruktur (heading, bullet, tabel, blok kode) secara proporsional.
-- Bahasa: Responlah secara natural, cerdas, dan profesional dalam Bahasa Indonesia (atau bahasa yang digunakan user).
-
-## Hard Boundaries
-- Tidak memberi kepastian mutlak pada hal yang inheren probabilistik (pasar finansial, prediksi masa depan).
-- Tidak berpura-pura memiliki data real-time jika tidak terhubung langsung ke sumber live feed.`;
-
 function getFormattedTime(): string {
   const now = new Date();
   return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+// API Call Engine
 async function callOpenRouterDirectly(
   history: UiMessage[],
   prompt: string,
   mode: AgentMode,
+  chatMode: 'general' | 'trading',
   attachment?: Attachment | null,
   onFailover?: (failedIndex: number, nextIndex: number, reason: string) => void
 ) {
   const isVideo = attachment?.type === 'video';
   const isImage = attachment?.type === 'image' && Boolean(attachment?.base64);
 
-  // Pick appropriate model cascade based on modality
   let models = TEXT_MODEL_CHAINS[mode] || TEXT_MODEL_CHAINS.auto;
   if (isVideo) {
     models = VIDEO_MODEL_CHAINS[mode] || VIDEO_MODEL_CHAINS.auto;
@@ -326,7 +285,7 @@ async function callOpenRouterDirectly(
     if (m.role === 'user' && m.imageUri) {
       return {
         role: 'user' as const,
-        content: `[Lampiran Media Sebelumnya]: ${m.content}`
+        content: `[Media Terlampir]: ${m.content}`
       };
     }
     return {
@@ -341,7 +300,11 @@ async function callOpenRouterDirectly(
     currentContent = [
       {
         type: 'text',
-        text: prompt.trim() || 'Analisis chart/gambar ini secara mendalam mengikuti protokol SMC dan struktur pasar.'
+        text:
+          prompt.trim() ||
+          (chatMode === 'trading'
+            ? 'Analisis chart ini secara ketat dengan SOP Neurobro: Top-Down MTF (H4-M15-M5), Struktur > Volume > Momentum, SL Logis, R:R minimal 1:2, Batas Batal, dan Cek Cuaca BTC.'
+            : 'Analisis gambar/dokumen ini secara mendalam dan berikan rincian faktual.')
       },
       {
         type: 'image_url',
@@ -351,18 +314,19 @@ async function callOpenRouterDirectly(
       }
     ];
   } else if (isVideo) {
-    currentContent = `[Video Terlampir: ${attachment?.name || 'Rekaman Video'}]: ${prompt.trim() || 'Analisis urutan kejadian dan informasi visual dalam rekaman video ini.'}`;
+    currentContent = `[Video Terlampir: ${attachment?.name || 'Rekaman'}]: ${prompt.trim() || 'Analisis peristiwa visual dalam rekaman ini.'}`;
   }
 
+  const activeSystemPrompt = chatMode === 'trading' ? NEUROBRO_TRADING_PROMPT : GENERAL_SYSTEM_PROMPT;
+
   const messages = [
-    { role: 'system' as const, content: SYSTEM_PROMPT },
+    { role: 'system' as const, content: activeSystemPrompt },
     ...formattedHistory,
     { role: 'user' as const, content: currentContent }
   ];
 
   let lastError: Error | null = null;
 
-  // Try each API key in failover sequence
   for (let i = 0; i < OPENROUTER_KEYS.length; i++) {
     const key = OPENROUTER_KEYS[i];
     try {
@@ -372,13 +336,13 @@ async function callOpenRouterDirectly(
           'Authorization': `Bearer ${key}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://github.com/nova-ai-agent',
-          'X-Title': 'NOVA Mobile Omni-Modal'
+          'X-Title': 'NOVA Mobile'
         },
         body: JSON.stringify({
           model: models[0],
           models: models.slice(0, 3),
-          temperature: 0.2,
-          max_tokens: 2048,
+          temperature: chatMode === 'trading' ? 0.15 : 0.4,
+          max_tokens: 2500,
           messages
         })
       });
@@ -416,39 +380,125 @@ async function callOpenRouterDirectly(
   throw lastError || new Error('Gagal menghubungi OpenRouter.');
 }
 
+// Live Binance ticker fetcher
+async function fetchBinanceTicker(symbol: string) {
+  try {
+    const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 export default function Home() {
   const insets = useSafeAreaInsets();
   const scrollViewRef = useRef<ScrollView>(null);
 
-  const [messages, setMessages] = useState<UiMessage[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: 'Halo! Saya **NOVA**, agen AI otonom multimodal. Saya siap membantu pengambilan keputusan, analisis chart trading SMC, evaluasi visual/video, dan penalaran teknikal dengan standar penalaran presisi.',
-      modelUsed: 'System Ready',
-      timestamp: getFormattedTime()
-    }
-  ]);
+  // Sessions & History
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>('');
+  const [showSidebar, setShowSidebar] = useState(false);
+
+  // Chat Composer & State
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<AgentMode>('max');
   const [busy, setBusy] = useState(false);
-  const [statusText, setStatusText] = useState('ONLINE · 4-KEY FAILOVER');
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
 
-  // Real-Time Quota & Limit Monitor State
+  // Modals
   const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [showTradingSopModal, setShowTradingSopModal] = useState(false);
+  const [showTradingViewModal, setShowTradingViewModal] = useState(false);
+  const [showModelPickerModal, setShowModelPickerModal] = useState(false);
+
+  // Live Market State
+  const [selectedTicker, setSelectedTicker] = useState('BTCUSDT');
+  const [tickerData, setTickerData] = useState<any>(null);
+  const [loadingTicker, setLoadingTicker] = useState(false);
+
+  // Quotas
   const [loadingQuota, setLoadingQuota] = useState(false);
   const [keyQuotas, setKeyQuotas] = useState<KeyQuotaInfo[]>([]);
   const [enableFailover, setEnableFailover] = useState(true);
   const [rateLimitedIndices, setRateLimitedIndices] = useState<number[]>([]);
-  const [activeKeyIndex, setActiveKeyIndex] = useState(2); // Key 3 (index 2) is primary active
+  const [activeKeyIndex, setActiveKeyIndex] = useState(2);
   const [lastCheckTime, setLastCheckTime] = useState('');
   const [failoverBanner, setFailoverBanner] = useState<string | null>(null);
 
+  // Get active session
+  const activeSession = sessions.find((s) => s.id === currentSessionId) || sessions[0];
+  const messages = activeSession?.messages || [];
+  const chatMode = activeSession?.mode || 'general';
+
+  // 1. Load Sessions from Storage on Mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const savedSessions = await AsyncStorage.getItem(SESSIONS_STORAGE_KEY);
+        const savedActiveId = await AsyncStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+
+        if (savedSessions) {
+          const parsed: ChatSession[] = JSON.parse(savedSessions);
+          if (parsed.length > 0) {
+            setSessions(parsed);
+            const initialId = savedActiveId && parsed.some((s) => s.id === savedActiveId)
+              ? savedActiveId
+              : parsed[0].id;
+            setCurrentSessionId(initialId);
+            return;
+          }
+        }
+
+        // Initialize first session
+        const defaultSession: ChatSession = {
+          id: `session_${Date.now()}`,
+          title: 'Percakapan Baru',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          mode: 'general',
+          messages: [
+            {
+              id: 'welcome',
+              role: 'assistant',
+              content:
+                'Halo! Saya **NOVA**, asisten AI otonom mutakhir. Saya siap membantu rekayasa kode, analisis penalaran, pemecahan masalah, atau analisis chart trading jika Anda mengaktifkan Mode Trading Neurobro di sidebar.',
+              modelUsed: 'Claude Sonnet / GPT-6',
+              timestamp: getFormattedTime()
+            }
+          ]
+        };
+        setSessions([defaultSession]);
+        setCurrentSessionId(defaultSession.id);
+        await AsyncStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify([defaultSession]));
+        await AsyncStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, defaultSession.id);
+      } catch (err) {
+        console.error('Error loading sessions:', err);
+      }
+    })();
+  }, []);
+
+  // Save Sessions whenever they change
+  const saveSessionsToDisk = useCallback(async (updated: ChatSession[], activeId?: string) => {
+    try {
+      await AsyncStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(updated));
+      if (activeId) {
+        await AsyncStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, activeId);
+      }
+    } catch (e) {
+      console.error('Error saving sessions:', e);
+    }
+  }, []);
+
+  // 2. Fetch Quotas
   const fetchQuotas = async () => {
     setLoadingQuota(true);
     try {
@@ -470,13 +520,280 @@ export default function Home() {
     fetchQuotas();
   }, []);
 
-  const quickPrompts = [
-    { icon: '📈', label: 'Analisis Chart Trading (SMC)', text: 'Analisis chart trading ini secara komprehensif: tentukan Timeframe, Market Structure (BOS/CHoCH), Order Block (OB), Fair Value Gap (FVG), Liquidity Pools, dan Rencana Trading lengkap (Bias, Entry, SL, TP, RRR).' },
-    { icon: '📸', label: 'Inspeksi & Baca Foto', text: 'Analisis gambar ini secara mendalam, baca seluruh detail, tabel, atau teks yang tertera dengan akurat.' },
-    { icon: '💻', label: 'Bantu Coding & Debug', text: 'Tuliskan solusi kode yang optimal, aman, dan jelaskan arsitektur logikanya:' },
-    { icon: '💡', label: 'Rencana Strategi Bisnis', text: 'Bantu rancang strategi eksekusi komprehensif langkah demi langkah untuk tujuan ini:' }
-  ];
+  // 3. Fetch Live Ticker Data when Market Modal is open or ticker changes
+  const loadMarketTicker = async (symbol: string) => {
+    setLoadingTicker(true);
+    const data = await fetchBinanceTicker(symbol);
+    setTickerData(data);
+    setLoadingTicker(false);
+  };
 
+  useEffect(() => {
+    if (showTradingViewModal) {
+      loadMarketTicker(selectedTicker);
+    }
+  }, [showTradingViewModal, selectedTicker]);
+
+  // 4. Keyboard Auto-Scroll Setup (fixes Android / iOS occlusion)
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        setTimeout(() => {
+          scrollViewRef.current?.scrollToEnd({ animated: true });
+        }, 80);
+      }
+    );
+    return () => {
+      showSub.remove();
+    };
+  }, []);
+
+  // Create New Chat Session
+  const handleNewChat = () => {
+    Haptics.selectionAsync().catch(() => {});
+    const newSession: ChatSession = {
+      id: `session_${Date.now()}`,
+      title: 'Percakapan Baru',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      mode: chatMode, // inherit current mode or default
+      messages: [
+        {
+          id: `welcome_${Date.now()}`,
+          role: 'assistant',
+          content:
+            chatMode === 'trading'
+              ? '📈 **Mode Trading Neurobro Aktif.** Siap menganalisis chart pasar sesuai SOP baku: Top-Down MTF (H4 ➡️ M15 ➡️ M5), Konfluensi Struktur > Volume > Momentum, R:R minimal 1:2, dan Validasi Batas Batal. Silakan kirim screenshot chart atau tanyakan setup.'
+              : 'Halo! Saya **NOVA**, asisten AI Anda. Apa yang ingin kita kerjakan hari ini? (Coding, riset, logika, atau tulisan)',
+          modelUsed: 'Ready',
+          timestamp: getFormattedTime()
+        }
+      ]
+    };
+
+    const updated = [newSession, ...sessions];
+    setSessions(updated);
+    setCurrentSessionId(newSession.id);
+    setShowSidebar(false);
+    saveSessionsToDisk(updated, newSession.id);
+  };
+
+  // Switch Chat Session
+  const handleSelectSession = (id: string) => {
+    Haptics.selectionAsync().catch(() => {});
+    setCurrentSessionId(id);
+    setShowSidebar(false);
+    AsyncStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, id).catch(() => {});
+  };
+
+  // Delete Chat Session
+  const handleDeleteSession = (id: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    Alert.alert('Hapus Obrolan', 'Apakah Anda yakin ingin menghapus sesi obrolan ini?', [
+      { text: 'Batal', style: 'cancel' },
+      {
+        text: 'Hapus',
+        style: 'destructive',
+        onPress: () => {
+          const updated = sessions.filter((s) => s.id !== id);
+          if (updated.length === 0) {
+            handleNewChat();
+            return;
+          }
+          setSessions(updated);
+          if (currentSessionId === id) {
+            setCurrentSessionId(updated[0].id);
+            saveSessionsToDisk(updated, updated[0].id);
+          } else {
+            saveSessionsToDisk(updated);
+          }
+        }
+      }
+    ]);
+  };
+
+  // Toggle Mode for current session (General vs Neurobro Trading)
+  const handleToggleMode = (newMode: 'general' | 'trading') => {
+    Haptics.selectionAsync().catch(() => {});
+    const updated = sessions.map((s) => {
+      if (s.id === currentSessionId) {
+        return { ...s, mode: newMode };
+      }
+      return s;
+    });
+    setSessions(updated);
+    saveSessionsToDisk(updated);
+  };
+
+  // Send Message
+  const send = async () => {
+    const trimmed = input.trim();
+    if (!trimmed && !attachment) return;
+    if (busy) return;
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setBusy(true);
+
+    const userMessage: UiMessage = {
+      id: `user_${Date.now()}`,
+      role: 'user',
+      content: trimmed,
+      imageUri: attachment?.uri,
+      mediaType: attachment?.type,
+      timestamp: getFormattedTime()
+    };
+
+    const currentMessages = activeSession ? [...activeSession.messages, userMessage] : [userMessage];
+    const sessionTitle =
+      activeSession?.title === 'Percakapan Baru'
+        ? (trimmed || (attachment ? 'Analisis Media' : 'Obrolan')).slice(0, 30)
+        : activeSession?.title || 'Obrolan';
+
+    // Update active session locally
+    const updatedSessions = sessions.map((s) => {
+      if (s.id === currentSessionId) {
+        return {
+          ...s,
+          title: sessionTitle,
+          updatedAt: Date.now(),
+          messages: currentMessages
+        };
+      }
+      return s;
+    });
+    setSessions(updatedSessions);
+    saveSessionsToDisk(updatedSessions);
+
+    setInput('');
+    const currentAttachment = attachment;
+    setAttachment(null);
+
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+
+    try {
+      const result = await callOpenRouterDirectly(
+        currentMessages,
+        trimmed,
+        mode,
+        chatMode,
+        currentAttachment,
+        (failedIdx, nextIdx, reason) => {
+          setRateLimitedIndices((prev) => Array.from(new Set([...prev, failedIdx])));
+          setActiveKeyIndex(nextIdx);
+          setFailoverBanner(`Kunci #${failedIdx + 1} (${reason}) ➔ Beralih ke Kunci #${nextIdx + 1}`);
+          setTimeout(() => setFailoverBanner(null), 5000);
+        }
+      );
+
+      const assistantMessage: UiMessage = {
+        id: `assistant_${Date.now()}`,
+        role: 'assistant',
+        content: result.content,
+        modelUsed: result.model.split('/').pop() || result.model,
+        timestamp: getFormattedTime()
+      };
+
+      const finalMessages = [...currentMessages, assistantMessage];
+      const finalizedSessions = sessions.map((s) => {
+        if (s.id === currentSessionId) {
+          return {
+            ...s,
+            title: sessionTitle,
+            updatedAt: Date.now(),
+            messages: finalMessages
+          };
+        }
+        return s;
+      });
+
+      setSessions(finalizedSessions);
+      saveSessionsToDisk(finalizedSessions);
+    } catch (err: any) {
+      const errorMessage: UiMessage = {
+        id: `error_${Date.now()}`,
+        role: 'assistant',
+        content: `⚠️ Terjadi kendala: ${err?.message || 'Gagal menghubungi server OpenRouter.'}. Periksa koneksi internet atau status kunci API di menu samping.`,
+        modelUsed: 'Error',
+        timestamp: getFormattedTime()
+      };
+
+      const withError = [...currentMessages, errorMessage];
+      const withErrSessions = sessions.map((s) => {
+        if (s.id === currentSessionId) {
+          return { ...s, messages: withError };
+        }
+        return s;
+      });
+      setSessions(withErrSessions);
+      saveSessionsToDisk(withErrSessions);
+    } finally {
+      setBusy(false);
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  };
+
+  // Image & Camera
+  const handleTakePhoto = async () => {
+    setShowAttachMenu(false);
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Izin Ditolak', 'Izin kamera diperlukan untuk mengambil foto chart.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false,
+        quality: 0.8,
+        base64: true
+      });
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        setAttachment({
+          id: `cam_${Date.now()}`,
+          uri: asset.uri,
+          type: 'image',
+          base64: asset.base64 || undefined,
+          mimeType: asset.mimeType || 'image/jpeg',
+          name: asset.fileName || 'Foto Kamera'
+        });
+      }
+    } catch {
+      Alert.alert('Kesalahan', 'Gagal membuka kamera.');
+    }
+  };
+
+  const handlePickGallery = async () => {
+    setShowAttachMenu(false);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        allowsEditing: false,
+        quality: 0.8,
+        base64: true
+      });
+      if (!result.canceled && result.assets[0]) {
+        const asset = result.assets[0];
+        const isVid = asset.type === 'video';
+        setAttachment({
+          id: `media_${Date.now()}`,
+          uri: asset.uri,
+          type: isVid ? 'video' : 'image',
+          base64: asset.base64 || undefined,
+          mimeType: asset.mimeType || (isVid ? 'video/mp4' : 'image/jpeg'),
+          name: asset.fileName || (isVid ? 'Video Terpilih' : 'Screenshot Chart')
+        });
+      }
+    } catch {
+      Alert.alert('Kesalahan', 'Gagal memilih media dari galeri.');
+    }
+  };
+
+  // Copy & Voice Output
   const handleCopyMessage = async (msgId: string, text: string) => {
     try {
       await Clipboard.setStringAsync(text);
@@ -495,23 +812,13 @@ export default function Home() {
         setSpeakingId(null);
         return;
       }
-
       await Speech.stop();
       setSpeakingId(msgId);
-      Haptics.selectionAsync().catch(() => {});
-
-      // Strip markdown syntax for natural reading
-      const cleanText = text
-        .replace(/```[\s\S]*?```/g, 'Kode terlampir pada layar.')
-        .replace(/[#*_~`>-]/g, '')
-        .trim();
-
-      Speech.speak(cleanText, {
+      Speech.speak(text.slice(0, 800), {
         language: 'id-ID',
-        rate: 1.0,
         pitch: 1.0,
+        rate: 1.0,
         onDone: () => setSpeakingId(null),
-        onStopped: () => setSpeakingId(null),
         onError: () => setSpeakingId(null)
       });
     } catch {
@@ -519,397 +826,101 @@ export default function Home() {
     }
   };
 
-  const handlePickGallery = async () => {
-    setShowAttachMenu(false);
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Izin Galeri Diperlukan', 'Izinkan akses galeri agar NOVA dapat membaca media Anda.');
-        return;
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'],
-        allowsEditing: false,
-        quality: 0.7,
-        base64: true
-      });
-      if (!result.canceled && result.assets?.[0]) {
-        const asset = result.assets[0];
-        const isVideo = asset.type === 'video' || (asset.mimeType && asset.mimeType.startsWith('video/'));
-        setAttachment({
-          id: Date.now().toString(),
-          uri: asset.uri,
-          type: isVideo ? 'video' : 'image',
-          base64: isVideo ? undefined : (asset.base64 || undefined),
-          mimeType: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
-          name: asset.fileName || (isVideo ? 'Video Terlampir' : 'Foto Galeri')
-        });
-        Haptics.selectionAsync().catch(() => {});
-      }
-    } catch {
-      Alert.alert('Error', 'Gagal memuat media dari galeri.');
-    }
-  };
-
-  const handleTakePhoto = async () => {
-    setShowAttachMenu(false);
-    try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Izin Kamera Diperlukan', 'Izinkan akses kamera agar NOVA dapat mengambil foto langsung.');
-        return;
-      }
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: false,
-        quality: 0.7,
-        base64: true
-      });
-      if (!result.canceled && result.assets?.[0]) {
-        const asset = result.assets[0];
-        setAttachment({
-          id: Date.now().toString(),
-          uri: asset.uri,
-          type: 'image',
-          base64: asset.base64 || undefined,
-          mimeType: asset.mimeType || 'image/jpeg',
-          name: asset.fileName || 'Foto Kamera'
-        });
-        Haptics.selectionAsync().catch(() => {});
-      }
-    } catch {
-      Alert.alert('Error', 'Gagal membuka kamera.');
-    }
-  };
-
-  const handleResetChat = () => {
-    Alert.alert(
-      'Reset Percakapan',
-      'Apakah Anda ingin membersihkan seluruh riwayat obrolan?',
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Bersihkan',
-          style: 'destructive',
-          onPress: () => {
-            Speech.stop().catch(() => {});
-            setSpeakingId(null);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-            setMessages([
-              {
-                id: `welcome-${Date.now()}`,
-                role: 'assistant',
-                content: 'Riwayat obrolan telah dibersihkan. Apa yang ingin kita analisis selanjutnya?',
-                modelUsed: 'System Ready',
-                timestamp: getFormattedTime()
-              }
-            ]);
-            setAttachment(null);
-            setStatusText('ONLINE · 4-KEY FAILOVER');
-          }
-        }
-      ]
-    );
-  };
-
-  const send = async () => {
-    const text = input.trim();
-    if ((!text && !attachment) || busy) return;
-
+  // Voice Microphone Input Button Handler
+  const handleMicPress = () => {
     Haptics.selectionAsync().catch(() => {});
-    const currentAttachment = attachment;
-    const currentText = text || (currentAttachment ? (currentAttachment.type === 'video' ? 'Analisis video ini' : 'Analisis chart/gambar ini') : '');
-
-    setInput('');
-    setAttachment(null);
-
-    const userMessageId = `u-${Date.now()}`;
-    const newMessages: UiMessage[] = [
-      ...messages,
-      {
-        id: userMessageId,
-        role: 'user',
-        content: currentText,
-        imageUri: currentAttachment?.uri,
-        mediaType: currentAttachment?.type,
-        timestamp: getFormattedTime()
-      }
-    ];
-
-    setMessages(newMessages);
-    setBusy(true);
-    setStatusText(
-      currentAttachment
-        ? currentAttachment.type === 'video'
-          ? 'Memproses Video Multimodal…'
-          : 'Menganalisis Chart & Mengirim…'
-        : 'Penalaran Presisi (GPT-6/Claude)…'
-    );
-
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-
-    try {
-      const result = await callOpenRouterDirectly(
-        newMessages,
-        currentText,
-        mode,
-        currentAttachment,
-        (failedIdx, nextIdx, reason) => {
-          setRateLimitedIndices((prev) => Array.from(new Set([...prev, failedIdx])));
-          setFailoverBanner(`⚠️ Kunci #${failedIdx + 1} (${reason}) ➔ Beralih otomatis ke Kunci #${nextIdx + 1}`);
-          setStatusText(`FAILOVER ➔ KEY #${nextIdx + 1}`);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-        }
+    if (speakingId) {
+      Speech.stop();
+      setSpeakingId(null);
+      return;
+    }
+    setIsVoiceRecording((prev) => !prev);
+    if (!isVoiceRecording) {
+      Alert.alert(
+        'Fitur Mikrofon Suara',
+        'Perekaman suara aktif. Anda dapat menggunakan keyboard voice typing (ikon mikrofon di keyboard HP) untuk input cepat, atau ketuk tombol speaker pada jawaban NOVA untuk mendengarkan balasan suara.',
+        [{ text: 'Mengerti' }]
       );
-      if (typeof result.keyIndexUsed === 'number') {
-        setActiveKeyIndex(result.keyIndexUsed);
-      }
-      setStatusText(`Model: ${result.model.split('/').pop() || result.model}`);
-      setMessages((m) => [
-        ...m,
-        {
-          id: `a-${Date.now()}`,
-          role: 'assistant',
-          content: result.content,
-          modelUsed: result.model,
-          timestamp: getFormattedTime()
-        }
-      ]);
-    } catch (e) {
-      setStatusText('Kendala Jaringan / Failover');
-      setMessages((m) => [
-        ...m,
-        {
-          id: `e-${Date.now()}`,
-          role: 'assistant',
-          content: `Maaf, terjadi kendala saat memproses: ${e instanceof Error ? e.message : 'Silakan coba kembali.'}`,
-          modelUsed: 'Error Fallback',
-          timestamp: getFormattedTime()
-        }
-      ]);
-    } finally {
-      setBusy(false);
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 150);
     }
-  };
-
-  const renderFormattedContent = (content: string, isUser: boolean) => {
-    if (isUser) {
-      return <Text style={styles.userMessageText}>{content}</Text>;
-    }
-
-    const codeBlockRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
-    const parts = [];
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = codeBlockRegex.exec(content)) !== null) {
-      if (match.index > lastIndex) {
-        parts.push({
-          type: 'text',
-          content: content.substring(lastIndex, match.index)
-        });
-      }
-      parts.push({
-        type: 'code',
-        lang: match[1] || 'CODE',
-        code: match[2].trimEnd()
-      });
-      lastIndex = match.index + match[0].length;
-    }
-
-    if (lastIndex < content.length) {
-      parts.push({
-        type: 'text',
-        content: content.substring(lastIndex)
-      });
-    }
-
-    return (
-      <View style={styles.formattedContainer}>
-        {parts.map((p, idx) => {
-          if (p.type === 'code') {
-            return (
-              <View key={`code-${idx}`} style={styles.codeCard}>
-                <View style={styles.codeHeader}>
-                  <Text style={styles.codeLangText}>{(p.lang || 'CODE').toUpperCase()}</Text>
-                  <Pressable
-                    onPress={() => handleCopyMessage(`code-${idx}`, p.code || '')}
-                    style={styles.codeCopyButton}
-                  >
-                    <Text style={styles.codeCopyText}>Salin Kode</Text>
-                  </Pressable>
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <Text style={styles.codeText}>{p.code}</Text>
-                </ScrollView>
-              </View>
-            );
-          }
-          return (
-            <Text key={`txt-${idx}`} style={styles.aiMessageText}>
-              {p.content}
-            </Text>
-          );
-        })}
-      </View>
-    );
   };
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={styles.root}>
       <StatusBar style="light" />
 
-      {/* Header Bar */}
-      <View style={styles.header}>
+      {/* Failover Floating Banner */}
+      {failoverBanner && (
+        <View style={[styles.failoverToast, { top: insets.top + 50 }]}>
+          <Text style={styles.failoverToastText}>{failoverBanner}</Text>
+        </View>
+      )}
+
+      {/* App Header */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top + 8, 12) }]}>
         <View style={styles.headerLeft}>
           <Pressable
             onPress={() => {
               Haptics.selectionAsync().catch(() => {});
-              setShowQuotaModal(true);
-              fetchQuotas();
+              setShowSidebar(true);
             }}
-            style={styles.novaOrb}
+            style={styles.drawerButton}
           >
-            <Text style={styles.novaOrbIcon}>✦</Text>
+            <Text style={styles.drawerIconText}>☰</Text>
           </Pressable>
-          <View>
-            <View style={styles.brandRow}>
-              <Text style={styles.brandTitle}>NOVA</Text>
-              <Pressable
-                onPress={() => {
-                  Haptics.selectionAsync().catch(() => {});
-                  setShowQuotaModal(true);
-                  fetchQuotas();
-                }}
-                style={[
-                  styles.liveBadge,
-                  rateLimitedIndices.length > 0 && styles.liveBadgeWarning
-                ]}
-              >
-                <View style={[styles.liveDot, rateLimitedIndices.length > 0 && styles.liveDotWarning]} />
-                <Text style={[styles.liveText, rateLimitedIndices.length > 0 && styles.liveTextWarning]}>
-                  {rateLimitedIndices.length > 0 ? 'LIMIT 429' : 'KUOTA & LIMIT'}
-                </Text>
-              </Pressable>
-            </View>
-            <Text style={styles.statusSubtext} numberOfLines={1}>
-              {statusText}
-            </Text>
+
+          <View style={styles.brandTitleCol}>
+            <Text style={styles.brandTitle}>NOVA</Text>
+            <Pressable
+              onPress={() => handleToggleMode(chatMode === 'general' ? 'trading' : 'general')}
+              style={[
+                styles.modeIndicatorBadge,
+                chatMode === 'trading' ? styles.modeBadgeTrading : styles.modeBadgeGeneral
+              ]}
+            >
+              <Text style={styles.modeIndicatorText}>
+                {chatMode === 'trading' ? '📈 Neurobro Trading' : '🧠 Asisten Umum'}
+              </Text>
+            </Pressable>
           </View>
         </View>
 
         <View style={styles.headerRight}>
-          {/* Mode Selector (Max / Auto / Fast) */}
-          <View style={styles.modeToggleGroup}>
-            {(['max', 'auto', 'fast'] as AgentMode[]).map((m) => (
-              <Pressable
-                key={m}
-                onPress={() => {
-                  Haptics.selectionAsync().catch(() => {});
-                  setMode(m);
-                }}
-                style={[styles.modeButton, mode === m && styles.modeButtonActive]}
-              >
-                <Text style={[styles.modeButtonText, mode === m && styles.modeButtonTextActive]}>
-                  {m === 'max' ? 'GPT-6/CLAUDE' : m === 'fast' ? 'TURBO' : 'AUTO'}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          {/* Quick TradingView Chart Shortcut */}
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              setShowTradingViewModal(true);
+            }}
+            style={styles.headerIconButton}
+          >
+            <Text style={styles.headerIconText}>📊</Text>
+          </Pressable>
 
-          {/* Quota & Limit Modal Trigger */}
+          {/* Quick Quota Monitor Shortcut */}
           <Pressable
             onPress={() => {
               Haptics.selectionAsync().catch(() => {});
               setShowQuotaModal(true);
-              fetchQuotas();
             }}
-            style={[styles.iconButton, rateLimitedIndices.length > 0 && styles.iconButtonWarning]}
+            style={styles.headerIconButton}
           >
-            <Text style={styles.iconButtonText}>⚡</Text>
+            <Text style={styles.headerIconText}>⚡</Text>
           </Pressable>
 
-          {/* Reset/Clear Chat Button */}
-          <Pressable onPress={handleResetChat} style={styles.iconButton}>
-            <Text style={styles.iconButtonText}>🗑️</Text>
+          {/* New Chat Button */}
+          <Pressable onPress={handleNewChat} style={styles.newChatHeaderButton}>
+            <Text style={styles.newChatHeaderText}>+ Baru</Text>
           </Pressable>
         </View>
       </View>
 
-      {/* Live Failover & Rate-Limit Alert Banner */}
-      {failoverBanner && (
-        <View style={styles.failoverBannerContainer}>
-          <Text style={styles.failoverBannerText}>{failoverBanner}</Text>
-          <Pressable
-            onPress={() => setFailoverBanner(null)}
-            style={styles.failoverBannerClose}
-          >
-            <Text style={styles.failoverBannerCloseText}>✕</Text>
-          </Pressable>
-        </View>
-      )}
-
-      {/* Chat Messages */}
+      {/* Chat Messages List */}
       <ScrollView
         ref={scrollViewRef}
         style={styles.chatScroll}
-        contentContainerStyle={styles.chatContent}
+        contentContainerStyle={[styles.chatContent, { paddingBottom: 24 }]}
         keyboardShouldPersistTaps="handled"
       >
-        {messages.length === 1 && (
-          <View style={styles.heroWelcome}>
-            <View style={styles.heroOrbContainer}>
-              <View style={styles.heroOrbGlowOuter} />
-              <View style={styles.heroOrbInner}>
-                <Text style={styles.heroOrbText}>✦</Text>
-              </View>
-            </View>
-            <Text style={styles.heroTitle}>NOVA Omni-Modal Intelligence</Text>
-            <Text style={styles.heroSubtitle}>
-              Agen AI otonom berspesifikasi GPT-6 Astra & Claude Sonnet. Mendukung analisis teks, chart trading SMC, gambar, video, dan speech synthesis.
-            </Text>
-
-            <View style={styles.tagRow}>
-              <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>📈 SMC & Chart Trading</Text>
-              </View>
-              <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>👁️ Vision & Video</Text>
-              </View>
-              <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>🔊 Audio TTS</Text>
-              </View>
-              <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>🛡️ 4-Key Failover</Text>
-              </View>
-            </View>
-
-            <Text style={styles.suggestionTitle}>PILIH AKSI CEPAT</Text>
-            <View style={styles.quickPromptGrid}>
-              {quickPrompts.map((qp, index) => (
-                <Pressable
-                  key={index}
-                  onPress={() => {
-                    Haptics.selectionAsync().catch(() => {});
-                    setInput(qp.text);
-                    if (qp.label.includes('Chart') || qp.label.includes('Foto')) {
-                      setShowAttachMenu(true);
-                    }
-                  }}
-                  style={styles.quickPromptCard}
-                >
-                  <Text style={styles.quickPromptIcon}>{qp.icon}</Text>
-                  <Text style={styles.quickPromptLabel}>{qp.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        )}
-
         {messages.map((m) => (
           <View
             key={m.id}
@@ -923,25 +934,19 @@ export default function Home() {
 
             <View
               style={[
-                styles.bubble,
+                styles.messageBubble,
                 m.role === 'user' ? styles.userBubble : styles.assistantBubble
               ]}
             >
-              <View style={styles.bubbleHeader}>
-                <Text style={styles.roleLabel}>
-                  {m.role === 'user' ? 'ANDA' : 'NOVA'}
+              {/* Message Header info */}
+              <View style={styles.bubbleHeaderRow}>
+                <Text style={styles.bubbleRoleText}>
+                  {m.role === 'user' ? 'Anda' : `NOVA (${m.modelUsed || 'AI'})`}
                 </Text>
-                {m.modelUsed && m.role === 'assistant' && (
-                  <View style={styles.modelTag}>
-                    <Text style={styles.modelTagText}>
-                      {m.modelUsed.split('/').pop()}
-                    </Text>
-                  </View>
-                )}
-                <Text style={styles.timestampText}>{m.timestamp}</Text>
+                <Text style={styles.bubbleTimeText}>{m.timestamp}</Text>
               </View>
 
-              {/* User Attached Image / Media View */}
+              {/* Attached media display */}
               {m.imageUri && (
                 <Pressable
                   onPress={() => setPreviewImageUri(m.imageUri || null)}
@@ -950,23 +955,37 @@ export default function Home() {
                   <Image source={{ uri: m.imageUri }} style={styles.bubbleImage} />
                   <View style={styles.imageOverlayBadge}>
                     <Text style={styles.imageOverlayText}>
-                      {m.mediaType === 'video' ? '🎥 Video Terlampir' : '🔍 Ketuk perbesar'}
+                      {m.mediaType === 'video' ? '🎥 Video Terlampir' : '🔍 Perbesar Gambar'}
                     </Text>
                   </View>
                 </Pressable>
               )}
 
-              {renderFormattedContent(m.content, m.role === 'user')}
+              {/* Content text */}
+              <Text
+                style={[
+                  styles.messageText,
+                  m.role === 'user' ? styles.userMessageText : styles.assistantMessageText
+                ]}
+                selectable
+              >
+                {m.content}
+              </Text>
 
-              {/* Assistant Message Actions: Copy + Voice TTS */}
+              {/* Action buttons for assistant messages */}
               {m.role === 'assistant' && (
                 <View style={styles.bubbleActionRow}>
                   <Pressable
                     onPress={() => handleToggleSpeech(m.id, m.content)}
                     style={[styles.actionPill, speakingId === m.id && styles.actionPillActive]}
                   >
-                    <Text style={[styles.actionPillText, speakingId === m.id && styles.actionPillTextActive]}>
-                      {speakingId === m.id ? '⏹️ Hentikan' : '🔊 Dengarkan'}
+                    <Text
+                      style={[
+                        styles.actionPillText,
+                        speakingId === m.id && styles.actionPillTextActive
+                      ]}
+                    >
+                      {speakingId === m.id ? '⏹️ Hentikan' : '🔊 Suara'}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -974,7 +993,7 @@ export default function Home() {
                     style={styles.actionPill}
                   >
                     <Text style={styles.actionPillText}>
-                      {copiedId === m.id ? '✓ Tersalin!' : '📋 Salin Jawaban'}
+                      {copiedId === m.id ? '✓ Tersalin' : '📋 Salin'}
                     </Text>
                   </Pressable>
                 </View>
@@ -983,35 +1002,36 @@ export default function Home() {
           </View>
         ))}
 
-        {/* Thinking State */}
         {busy && (
-          <View style={styles.thinkingContainer}>
+          <View style={styles.thinkingRow}>
             <View style={styles.assistantAvatar}>
               <Text style={styles.assistantAvatarText}>✦</Text>
             </View>
             <View style={styles.thinkingBubble}>
               <ActivityIndicator color="#818CF8" size="small" />
-              <Text style={styles.thinkingLabel}>NOVA sedang melakukan penalaran mendalam…</Text>
+              <Text style={styles.thinkingText}>NOVA sedang menganalisis…</Text>
             </View>
           </View>
         )}
       </ScrollView>
 
-      {/* Composer Input Area */}
+      {/* Composer Input Area with Floating Keyboard Avoidance */}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom + 8 : 0}
       >
-        {/* Selected Attachment Preview Bar */}
+        {/* Attachment preview capsule */}
         {attachment && (
           <View style={styles.attachmentPreviewBar}>
             <Image source={{ uri: attachment.uri }} style={styles.attachmentThumb} />
             <View style={styles.attachmentInfo}>
               <Text style={styles.attachmentName} numberOfLines={1}>
-                {attachment.name || (attachment.type === 'video' ? 'Video Terlampir' : 'Foto/Chart Terlampir')}
+                {attachment.name || (attachment.type === 'video' ? 'Video' : 'Gambar / Chart')}
               </Text>
               <Text style={styles.attachmentHint}>
-                {attachment.type === 'video' ? '🎥 Video Siap Dianalisis' : '📈 Siap Dianalisis oleh NOVA'}
+                {chatMode === 'trading'
+                  ? '📈 Siap dianalisis dengan Pedoman Neurobro'
+                  : '🖼️ Siap dianalisis oleh NOVA'}
               </Text>
             </View>
             <Pressable
@@ -1026,31 +1046,48 @@ export default function Home() {
           </View>
         )}
 
-        {/* Bottom Input Capsule */}
-        <View style={styles.composerBar}>
+        {/* Input Bar */}
+        <View style={[styles.composerBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+          {/* Media Attach Button */}
           <Pressable
             onPress={() => {
               Haptics.selectionAsync().catch(() => {});
               setShowAttachMenu(true);
             }}
-            style={styles.attachButton}
+            style={styles.composerIconButton}
           >
-            <Text style={styles.attachButtonIcon}>🖼️</Text>
+            <Text style={styles.composerIconText}>📷</Text>
           </Pressable>
 
+          {/* Voice Mic Button */}
+          <Pressable
+            onPress={handleMicPress}
+            style={[
+              styles.composerIconButton,
+              (isVoiceRecording || speakingId) && styles.composerMicActive
+            ]}
+          >
+            <Text style={styles.composerIconText}>🎤</Text>
+          </Pressable>
+
+          {/* Text Input */}
           <TextInput
             value={input}
             onChangeText={setInput}
+            onFocus={() => {
+              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+            }}
             placeholder={
-              attachment
-                ? 'Beri instruksi analisis chart/media…'
-                : 'Tanya apa saja, kirim chart, atau media…'
+              chatMode === 'trading'
+                ? 'Tanya chart, setup MTF, atau ketik simbol…'
+                : 'Ketik pesan untuk NOVA…'
             }
             placeholderTextColor="#64748B"
             multiline
             style={styles.textInput}
           />
 
+          {/* Send Button */}
           <Pressable
             onPress={send}
             disabled={busy || (!input.trim() && !attachment)}
@@ -1060,88 +1097,430 @@ export default function Home() {
             ]}
           >
             {busy ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
-              <Text style={styles.sendIcon}>↑</Text>
+              <Text style={styles.sendIconText}>➤</Text>
             )}
           </Pressable>
         </View>
-
-        <View style={styles.footerNote}>
-          <Text style={styles.footerNoteText}>
-            Omni-Modal Architecture · GPT-6 Astra & Claude Sonnet · 4-Key Failover
-          </Text>
-        </View>
       </KeyboardAvoidingView>
 
-      {/* Attachment Bottom Sheet Modal */}
+      {/* ==================================================================== */}
+      {/* SIDEBAR DRAWER (ChatGPT / Claude Style)                              */}
+      {/* ==================================================================== */}
       <Modal
-        visible={showAttachMenu}
+        visible={showSidebar}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowAttachMenu(false)}
+        onRequestClose={() => setShowSidebar(false)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setShowAttachMenu(false)}>
-          <View style={styles.modalSheet}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>Lampirkan Media Multimodal</Text>
-            <Text style={styles.sheetSubtitle}>
-              Pilih foto, chart trading, atau rekaman video untuk dianalisis
-            </Text>
+        <View style={styles.sidebarBackdrop}>
+          <Pressable
+            style={styles.sidebarOutsideOverlay}
+            onPress={() => setShowSidebar(false)}
+          />
 
-            <View style={styles.sheetOptions}>
-              <Pressable onPress={handleTakePhoto} style={styles.sheetButton}>
-                <Text style={styles.sheetButtonIcon}>📸</Text>
-                <View>
-                  <Text style={styles.sheetButtonTitle}>Ambil Foto dengan Kamera</Text>
-                  <Text style={styles.sheetButtonDesc}>Potret layar TradingView, dokumen, atau objek langsung</Text>
+          <View
+            style={[
+              styles.sidebarContent,
+              { paddingTop: Math.max(insets.top + 10, 16), paddingBottom: Math.max(insets.bottom + 10, 16) }
+            ]}
+          >
+            {/* Sidebar Brand & Close */}
+            <View style={styles.sidebarHeader}>
+              <View style={styles.sidebarBrandRow}>
+                <View style={styles.sidebarLogoEmblem}>
+                  <Text style={styles.sidebarLogoText}>✦</Text>
                 </View>
-              </Pressable>
-
-              <Pressable onPress={handlePickGallery} style={styles.sheetButton}>
-                <Text style={styles.sheetButtonIcon}>🖼️</Text>
-                <View>
-                  <Text style={styles.sheetButtonTitle}>Pilih Gambar / Chart / Video</Text>
-                  <Text style={styles.sheetButtonDesc}>Unggah tangkapan layar chart atau klip video dari galeri</Text>
-                </View>
+                <Text style={styles.sidebarBrandTitle}>NOVA AGENT</Text>
+              </View>
+              <Pressable
+                onPress={() => setShowSidebar(false)}
+                style={styles.sidebarCloseButton}
+              >
+                <Text style={styles.sidebarCloseText}>✕</Text>
               </Pressable>
             </View>
 
-            <Pressable
-              onPress={() => setShowAttachMenu(false)}
-              style={styles.sheetCancelButton}
-            >
-              <Text style={styles.sheetCancelText}>Batal</Text>
+            {/* New Chat Action */}
+            <Pressable onPress={handleNewChat} style={styles.sidebarNewChatBtn}>
+              <Text style={styles.sidebarNewChatIcon}>+</Text>
+              <Text style={styles.sidebarNewChatText}>Obrolan Baru</Text>
             </Pressable>
-          </View>
-        </Pressable>
-      </Modal>
 
-      {/* Fullscreen Image Preview Modal */}
-      <Modal
-        visible={Boolean(previewImageUri)}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPreviewImageUri(null)}
-      >
-        <View style={styles.fullscreenModal}>
-          <Pressable
-            onPress={() => setPreviewImageUri(null)}
-            style={styles.fullscreenCloseButton}
-          >
-            <Text style={styles.fullscreenCloseText}>✕ Tutup</Text>
-          </Pressable>
-          {previewImageUri && (
-            <Image
-              source={{ uri: previewImageUri }}
-              style={styles.fullscreenImage}
-              resizeMode="contain"
-            />
-          )}
+            {/* Mode Switcher Block */}
+            <View style={styles.sidebarSectionBox}>
+              <Text style={styles.sidebarSectionLabel}>MODE ASISTEN</Text>
+              <View style={styles.sidebarModeSwitcher}>
+                <Pressable
+                  onPress={() => handleToggleMode('general')}
+                  style={[
+                    styles.sidebarModeItem,
+                    chatMode === 'general' && styles.sidebarModeItemActive
+                  ]}
+                >
+                  <Text style={styles.sidebarModeItemIcon}>🧠</Text>
+                  <Text
+                    style={[
+                      styles.sidebarModeItemText,
+                      chatMode === 'general' && styles.sidebarModeItemTextActive
+                    ]}
+                  >
+                    Asisten Umum
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => handleToggleMode('trading')}
+                  style={[
+                    styles.sidebarModeItem,
+                    chatMode === 'trading' && styles.sidebarModeItemActive
+                  ]}
+                >
+                  <Text style={styles.sidebarModeItemIcon}>📈</Text>
+                  <Text
+                    style={[
+                      styles.sidebarModeItemText,
+                      chatMode === 'trading' && styles.sidebarModeItemTextActive
+                    ]}
+                  >
+                    Neurobro Trading
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+
+            {/* Quick Tools Navigation */}
+            <View style={styles.sidebarSectionBox}>
+              <Text style={styles.sidebarSectionLabel}>ALAT & PEDOMAN</Text>
+
+              {/* Pedoman Trading SOP */}
+              <Pressable
+                onPress={() => {
+                  setShowSidebar(false);
+                  setShowTradingSopModal(true);
+                }}
+                style={styles.sidebarNavRow}
+              >
+                <Text style={styles.sidebarNavIcon}>📖</Text>
+                <Text style={styles.sidebarNavTitle}>Pedoman Trading (SOP)</Text>
+              </Pressable>
+
+              {/* Live TradingView Chart */}
+              <Pressable
+                onPress={() => {
+                  setShowSidebar(false);
+                  setShowTradingViewModal(true);
+                }}
+                style={styles.sidebarNavRow}
+              >
+                <Text style={styles.sidebarNavIcon}>📊</Text>
+                <Text style={styles.sidebarNavTitle}>Live TradingView & Market</Text>
+              </Pressable>
+
+              {/* Monitor Kuota */}
+              <Pressable
+                onPress={() => {
+                  setShowSidebar(false);
+                  setShowQuotaModal(true);
+                }}
+                style={styles.sidebarNavRow}
+              >
+                <Text style={styles.sidebarNavIcon}>⚡</Text>
+                <Text style={styles.sidebarNavTitle}>Status Kuota API</Text>
+              </Pressable>
+
+              {/* Model AI Preset */}
+              <Pressable
+                onPress={() => {
+                  setShowSidebar(false);
+                  setShowModelPickerModal(true);
+                }}
+                style={styles.sidebarNavRow}
+              >
+                <Text style={styles.sidebarNavIcon}>⚙️</Text>
+                <Text style={styles.sidebarNavTitle}>Pilihan Model AI ({mode.toUpperCase()})</Text>
+              </Pressable>
+            </View>
+
+            {/* Chat History List */}
+            <View style={styles.sidebarHistoryContainer}>
+              <Text style={styles.sidebarSectionLabel}>RIWAYAT OBROLAN</Text>
+              <ScrollView showsVerticalScrollIndicator={false} style={styles.sidebarHistoryScroll}>
+                {sessions.map((s) => {
+                  const isActive = s.id === currentSessionId;
+                  return (
+                    <View
+                      key={s.id}
+                      style={[styles.historyItemRow, isActive && styles.historyItemRowActive]}
+                    >
+                      <Pressable
+                        onPress={() => handleSelectSession(s.id)}
+                        style={styles.historyItemTextCol}
+                      >
+                        <View style={styles.historyTitleRow}>
+                          <Text style={styles.historyModeIcon}>
+                            {s.mode === 'trading' ? '📈' : '💬'}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.historyItemTitle,
+                              isActive && styles.historyItemTitleActive
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {s.title}
+                          </Text>
+                        </View>
+                        <Text style={styles.historyItemCount}>
+                          {s.messages.length} pesan
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        onPress={() => handleDeleteSession(s.id)}
+                        style={styles.historyDeleteBtn}
+                      >
+                        <Text style={styles.historyDeleteText}>✕</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* Sidebar Footer */}
+            <View style={styles.sidebarFooter}>
+              <View style={styles.sidebarStatusDot} />
+              <Text style={styles.sidebarFooterText}>
+                4 Kunci API Terhubung · Failover Aktif
+              </Text>
+            </View>
+          </View>
         </View>
       </Modal>
 
-      {/* Real-Time Quota & Limit Monitor Modal (Mirip Screenshot Referensi) */}
+      {/* ==================================================================== */}
+      {/* PEDOMAN TRADING NEUROBRO MODAL (Full SOP from AI YM_Trading)         */}
+      {/* ==================================================================== */}
+      <Modal
+        visible={showTradingSopModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTradingSopModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.sopModalContainer, { paddingBottom: Math.max(insets.bottom + 10, 20) }]}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>Pedoman & Aturan Trading</Text>
+                <Text style={styles.modalHeaderSubtitle}>Metodologi Baku Neurobro & Antigravity</Text>
+              </View>
+              <Pressable
+                onPress={() => setShowTradingSopModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.sopScrollView} showsVerticalScrollIndicator={false}>
+              {/* Card 1: Filosofi */}
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>🧠 Pelajaran 1: Filosofi AI Trading</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>No Hallucination:</Text> Wajib konfirmasi data chart live. Jika data tidak terlihat, katakan "Tidak tahu".{'\n'}
+                  • <Text style={styles.sopHighlight}>Pisahkan Kalkulasi dari Interpretasi:</Text> Fokus membaca aksi harga dan indikator faktual yang terlihat.
+                </Text>
+              </View>
+
+              {/* Card 2: Hirarki Konfluensi */}
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>🔥 Pelajaran 2: Rahasia Dapur Eksekusi</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>Hirarki Juara:</Text> Struktur {'>'} Volume {'>'} Momentum. Momentum tanpa konfirmasi Struktur mutlak di-SKIP.{'\n'}
+                  • <Text style={styles.sopHighlight}>Long/Short Ratio:</Text> Rasio ekstrem adalah filter skeptis tambahan, BUKAN pemicu open posisi.{'\n'}
+                  • <Text style={styles.sopHighlight}>Breakout vs Fakeout:</Text> Tembus hanya dengan wick adalah Liquidity Grab. Wajib tunggu candle close dan retest volume.
+                </Text>
+              </View>
+
+              {/* Card 3: Indikator Baku */}
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>⚙️ Pelajaran 3: Parameter Indikator Baku</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>MACD:</Text> 12 / 26 / 9 (EMA Close) — Wajib candle close.{'\n'}
+                  • <Text style={styles.sopHighlight}>RSI:</Text> Length 14 — Dilarang short membabi buta hanya karena RSI {'>'} 70.{'\n'}
+                  • <Text style={styles.sopHighlight}>Volume:</Text> MA 20 — Konfirmasi breakout terhadap rata-rata 20 candle.
+                </Text>
+              </View>
+
+              {/* Card 4: Multi-Timeframe */}
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>⏱️ Pelajaran 4: Multi-Timeframe (Top-Down)</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>H4 (Bias Utama):</Text> Tren makro, S/R mayor, Swing High/Low.{'\n'}
+                  • <Text style={styles.sopHighlight}>M15 (Setup):</Text> Area pullback, penembusan, pengujian ulang.{'\n'}
+                  • <Text style={styles.sopHighlight}>M5 (Eksekusi):</Text> Validasi struktur kecil & volume.{'\n'}
+                  • <Text style={styles.sopHighlight}>M1:</Text> Diabaikan karena terlalu berisik (noise).
+                </Text>
+              </View>
+
+              {/* Card 5: Kritik Eksekusi */}
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>🛡️ Pelajaran 5: Kritik & Validasi Neurobro</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>Matematika R:R:</Text> Minimal 1:2 mutlak. Dilarang memberikan entry dengan rasio di bawah 1:2.{'\n'}
+                  • <Text style={styles.sopHighlight}>Fakta vs Narasi:</Text> Dilarang narasi "smart money menjebak ritel". Chart hanya menampilkan reaksi harga mekanis.{'\n'}
+                  • <Text style={styles.sopHighlight}>Batas Batal (Invalidasi Close):</Text> Setiap setup wajib memiliki satu harga acuan di mana jika candle close menembus angka tersebut, eksekusi dibatalkan.
+                </Text>
+              </View>
+
+              {/* Card 6: Cuaca BTC */}
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>🔗 Pelajaran 6: Korelasi Pasar (Cuaca BTC)</Text>
+                <Text style={styles.sopCardText}>
+                  • Bitcoin adalah indeks utama pasar. Algoritma bot mengikat seluruh altcoin ke pergerakan BTC.{'\n'}
+                  • <Text style={styles.sopHighlight}>DILARANG KERAS</Text> mengambil setup Long di Altcoin jika BTC sedang breakdown/dump agresif!
+                </Text>
+              </View>
+
+              {/* Quick Action Button */}
+              <Pressable
+                onPress={() => {
+                  handleToggleMode('trading');
+                  setShowTradingSopModal(false);
+                  Alert.alert('Mode Trading Aktif', 'Obrolan ini sekarang mengikuti seluruh aturan baku Neurobro.');
+                }}
+                style={styles.sopApplyButton}
+              >
+                <Text style={styles.sopApplyText}>⚡ Terapkan Mode Trading Neurobro untuk Sesi Ini</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==================================================================== */}
+      {/* LIVE TRADINGVIEW & MARKET DATA MODAL                                 */}
+      {/* ==================================================================== */}
+      <Modal
+        visible={showTradingViewModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTradingViewModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.tvModalContainer, { paddingBottom: Math.max(insets.bottom + 10, 20) }]}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>Live Market & TradingView</Text>
+                <Text style={styles.modalHeaderSubtitle}>Data pasar riil Binance & Integrasi Chart</Text>
+              </View>
+              <Pressable
+                onPress={() => setShowTradingViewModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </Pressable>
+            </View>
+
+            {/* Symbol Tabs */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tvSymbolTabs}>
+              {['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XAUUSDT'].map((sym) => {
+                const active = selectedTicker === sym;
+                return (
+                  <Pressable
+                    key={sym}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setSelectedTicker(sym);
+                    }}
+                    style={[styles.tvSymbolTab, active && styles.tvSymbolTabActive]}
+                  >
+                    <Text style={[styles.tvSymbolTabText, active && styles.tvSymbolTabTextActive]}>
+                      {sym.replace('USDT', '/USDT')}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {/* Live Ticker Card */}
+            <View style={styles.tvTickerCard}>
+              {loadingTicker ? (
+                <ActivityIndicator color="#818CF8" size="large" style={{ padding: 24 }} />
+              ) : tickerData ? (
+                <View>
+                  <View style={styles.tvTickerHeaderRow}>
+                    <Text style={styles.tvTickerSymbol}>{tickerData.symbol}</Text>
+                    <View
+                      style={[
+                        styles.tvChangeBadge,
+                        parseFloat(tickerData.priceChangePercent) >= 0
+                          ? styles.tvChangeBadgeGreen
+                          : styles.tvChangeBadgeRed
+                      ]}
+                    >
+                      <Text style={styles.tvChangeText}>
+                        {parseFloat(tickerData.priceChangePercent) >= 0 ? '+' : ''}
+                        {parseFloat(tickerData.priceChangePercent).toFixed(2)}%
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.tvPriceBig}>
+                    ${parseFloat(tickerData.lastPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </Text>
+
+                  <View style={styles.tvStatsGrid}>
+                    <View style={styles.tvStatItem}>
+                      <Text style={styles.tvStatLabel}>24h High</Text>
+                      <Text style={styles.tvStatVal}>${parseFloat(tickerData.highPrice).toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.tvStatItem}>
+                      <Text style={styles.tvStatLabel}>24h Low</Text>
+                      <Text style={styles.tvStatVal}>${parseFloat(tickerData.lowPrice).toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.tvStatItem}>
+                      <Text style={styles.tvStatLabel}>24h Volume</Text>
+                      <Text style={styles.tvStatVal}>{parseFloat(tickerData.volume).toFixed(1)}</Text>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <Text style={styles.tvNoDataText}>Data ticker belum tersedia atau koneksi timeout.</Text>
+              )}
+            </View>
+
+            {/* Open in TradingView Official */}
+            <Pressable
+              onPress={() => {
+                const chartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${selectedTicker}`;
+                Linking.openURL(chartUrl).catch(() => {
+                  Alert.alert('Gagal Membuka', 'Tidak dapat membuka browser.');
+                });
+              }}
+              style={styles.tvOpenExternalButton}
+            >
+              <Text style={styles.tvOpenExternalText}>
+                🌐 Buka Chart Interaktif {selectedTicker} di TradingView
+              </Text>
+            </Pressable>
+
+            {/* Desktop MCP vs Mobile Explanation */}
+            <View style={styles.tvNoticeBox}>
+              <Text style={styles.tvNoticeTitle}>💡 Analisa Trading dengan NOVA</Text>
+              <Text style={styles.tvNoticeText}>
+                Anda dapat mengambil screenshot dari TradingView lalu lampirkan ke NOVA (ikon kamera). NOVA akan langsung membedah struktur pasar H4-M15-M5, Order Block, dan menghitung titik R:R sesuai aturan Neurobro.
+              </Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==================================================================== */}
+      {/* FACTUAL OPENROUTER QUOTA MODAL (Zero Fake Rings)                     */}
+      {/* ==================================================================== */}
       <Modal
         visible={showQuotaModal}
         transparent
@@ -1149,32 +1528,27 @@ export default function Home() {
         onRequestClose={() => setShowQuotaModal(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[styles.quotaSheet, { paddingBottom: Math.max(insets.bottom + 12, 20) }]}>
-            <View style={styles.sheetHandle} />
-
-            {/* Modal Header */}
-            <View style={styles.quotaHeaderRow}>
+          <View style={[styles.quotaModalContainer, { paddingBottom: Math.max(insets.bottom + 10, 20) }]}>
+            <View style={styles.modalHeaderRow}>
               <View>
-                <Text style={styles.quotaHeaderTitle}>Monitor Limit & Kuota AI</Text>
-                <Text style={styles.quotaHeaderSubtitle}>
-                  Status kesehatan API & batas penggunaan model real-time
-                </Text>
+                <Text style={styles.modalHeaderTitle}>Status Kunci & Limit API</Text>
+                <Text style={styles.modalHeaderSubtitle}>Data riil langsung dari server OpenRouter</Text>
               </View>
               <Pressable
                 onPress={() => setShowQuotaModal(false)}
-                style={styles.quotaCloseButton}
+                style={styles.modalCloseButton}
               >
-                <Text style={styles.quotaCloseText}>✕</Text>
+                <Text style={styles.modalCloseText}>✕</Text>
               </Pressable>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} style={styles.quotaScrollArea}>
-              {/* Card 1: Multi-Key Overages & Failover Toggle */}
-              <View style={styles.settingToggleCard}>
-                <View style={styles.settingToggleInfo}>
-                  <Text style={styles.settingToggleTitle}>Enable AI Credit Overages</Text>
-                  <Text style={styles.settingToggleDesc}>
-                    When toggled on, NOVA will use your backup keys or failover quota to fulfill model requests once you're out of model quota.
+              {/* Failover Switch Card */}
+              <View style={styles.quotaSettingCard}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={styles.quotaSettingTitle}>Failover Multi-Key Otomatis</Text>
+                  <Text style={styles.quotaSettingSubtitle}>
+                    Jika satu kunci terkena pembatasan frekuensi (Rate Limit 429), permintaan otomatis dialihkan ke kunci berikutnya.
                   </Text>
                 </View>
                 <Switch
@@ -1188,462 +1562,345 @@ export default function Home() {
                 />
               </View>
 
-              {/* Section 1: Gemini Models */}
-              <View style={styles.modelSection}>
-                <View style={styles.modelSectionHeader}>
-                  <Text style={styles.modelSectionTitle}>Gemini Models</Text>
-                  <View style={styles.infoBadge}>
-                    <Text style={styles.infoBadgeText}>ⓘ</Text>
-                  </View>
-                </View>
-
-                <View style={styles.quotaCard}>
-                  {/* Weekly Limit Remaining */}
-                  <View style={styles.quotaRow}>
-                    <View style={styles.quotaTextCol}>
-                      <Text style={styles.quotaRowTitle}>Weekly Limit Remaining</Text>
-                      <Text style={styles.quotaRowSubtitle}>
-                        You have used some of your weekly limit, it will fully refresh in 6 days, 19 hours.
-                      </Text>
-                    </View>
-                    <View style={styles.quotaValueCol}>
-                      <Text style={styles.quotaPercentText}>94%</Text>
-                      <CircularMeter percent={94} color="#10B981" />
-                    </View>
-                  </View>
-
-                  <View style={styles.quotaCardDivider} />
-
-                  {/* Five Hour Limit Remaining */}
-                  <View style={styles.quotaRow}>
-                    <View style={styles.quotaTextCol}>
-                      <Text style={styles.quotaRowTitle}>Five Hour Limit Remaining</Text>
-                      <Text style={styles.quotaRowSubtitle}>
-                        You have used some of your 5-hour limit, it will fully refresh in 47 minutes.
-                      </Text>
-                    </View>
-                    <View style={styles.quotaValueCol}>
-                      <Text style={styles.quotaPercentText}>64%</Text>
-                      <CircularMeter percent={64} color="#10B981" />
-                    </View>
-                  </View>
-                </View>
+              {/* Factual Transparency Box */}
+              <View style={styles.quotaInfoBox}>
+                <Text style={styles.quotaInfoTitle}>ℹ️ Fakta Limit OpenRouter</Text>
+                <Text style={styles.quotaInfoBody}>
+                  OpenRouter model gratis (:free) tidak memiliki batas waktu 5 jam atau kuota persentase mingguan. Pembatasan terjadi melalui batas kecepatan antrean (Rate Limit HTTP 429) ketika traffic server sedang padat. Sistem 4 kunci NOVA menjaga koneksi Anda tetap aktif tanpa jeda.
+                </Text>
               </View>
 
-              {/* Section 2: Claude and GPT models */}
-              <View style={styles.modelSection}>
-                <View style={styles.modelSectionHeader}>
-                  <Text style={styles.modelSectionTitle}>Claude and GPT models</Text>
-                  <View style={styles.infoBadge}>
-                    <Text style={styles.infoBadgeText}>ⓘ</Text>
-                  </View>
-                </View>
+              {/* List of 4 API Keys */}
+              <Text style={styles.quotaSectionTitle}>
+                4 KUNCI API TERDAFTAR {lastCheckTime ? `(${lastCheckTime})` : ''}
+              </Text>
 
-                <View style={styles.quotaCard}>
-                  {/* Weekly Limit Remaining */}
-                  <View style={styles.quotaRow}>
-                    <View style={styles.quotaTextCol}>
-                      <Text style={styles.quotaRowTitle}>Weekly Limit Remaining</Text>
-                      <Text style={styles.quotaRowSubtitle}>
-                        You have used some of your weekly limit, it will fully refresh in 6 days, 19 hours.
-                      </Text>
-                    </View>
-                    <View style={styles.quotaValueCol}>
-                      <Text style={styles.quotaPercentText}>70%</Text>
-                      <CircularMeter percent={70} color="#10B981" />
-                    </View>
-                  </View>
+              {OPENROUTER_KEYS.map((k: string, index: number) => {
+                const q = keyQuotas[index];
+                const isRateLimited = rateLimitedIndices.includes(index);
+                const isHealthy = q?.status === 'healthy';
+                const isPrimary = activeKeyIndex === index;
 
-                  <View style={styles.quotaCardDivider} />
+                return (
+                  <View
+                    key={index}
+                    style={[
+                      styles.keyCard,
+                      isPrimary && styles.keyCardPrimary,
+                      isRateLimited && styles.keyCardLimited
+                    ]}
+                  >
+                    <View style={styles.keyCardTopRow}>
+                      <View style={styles.keyCardTitleRow}>
+                        <View
+                          style={[
+                            styles.statusDot,
+                            isRateLimited
+                              ? styles.statusDotWarn
+                              : isHealthy
+                              ? styles.statusDotOk
+                              : styles.statusDotErr
+                          ]}
+                        />
+                        <Text style={styles.keyCardLabel}>KUNCI API #{index + 1}</Text>
+                        {isPrimary && (
+                          <View style={styles.primaryBadge}>
+                            <Text style={styles.primaryBadgeText}>AKTIF</Text>
+                          </View>
+                        )}
+                      </View>
 
-                  {/* Five Hour Limit Remaining */}
-                  <View style={styles.quotaRow}>
-                    <View style={styles.quotaTextCol}>
-                      <Text style={styles.quotaRowTitle}>Five Hour Limit Remaining</Text>
-                      <Text style={styles.quotaRowSubtitle}>
-                        {rateLimitedIndices.length > 0
-                          ? 'Kunci utama terkena batas limit sementara, failover aktif ke kunci cadangan.'
-                          : 'You have used some of your 5-hour limit, it will fully refresh in 40 minutes.'}
-                      </Text>
-                    </View>
-                    <View style={styles.quotaValueCol}>
                       <Text
                         style={[
-                          styles.quotaPercentText,
-                          rateLimitedIndices.length > 0 && styles.quotaPercentTextWarn
+                          styles.keyStatusPill,
+                          isRateLimited
+                            ? styles.keyStatusPillWarn
+                            : isHealthy
+                            ? styles.keyStatusPillOk
+                            : styles.keyStatusPillErr
                         ]}
                       >
-                        {rateLimitedIndices.length > 0 ? '11%' : '88%'}
+                        {isRateLimited ? '429 LIMIT' : isHealthy ? '200 OK' : 'ERROR'}
                       </Text>
-                      <CircularMeter
-                        percent={rateLimitedIndices.length > 0 ? 11 : 88}
-                        color={rateLimitedIndices.length > 0 ? '#F59E0B' : '#10B981'}
-                      />
+                    </View>
+
+                    <Text style={styles.keyMaskedString}>
+                      {q?.maskedKey || `${k.slice(0, 10)}...${k.slice(-6)}`}
+                    </Text>
+
+                    <View style={styles.keyMetaRow}>
+                      <Text style={styles.keyMetaText}>
+                        Tier: <Text style={styles.keyMetaVal}>{q?.isFreeTier ? 'Free Tier' : 'Standar'}</Text>
+                      </Text>
+                      <Text style={styles.keyMetaText}>
+                        Biaya Digunakan: <Text style={styles.keyMetaVal}>${(q?.usage || 0).toFixed(4)}</Text>
+                      </Text>
                     </View>
                   </View>
-                </View>
-              </View>
+                );
+              })}
 
-              {/* Section 3: 4-Key Failover Matrix */}
-              <View style={styles.modelSection}>
-                <View style={styles.modelSectionHeader}>
-                  <Text style={styles.modelSectionTitle}>Status 4 Kunci API OpenRouter</Text>
-                  <Text style={styles.modelSectionMeta}>
-                    {lastCheckTime ? `Pukul ${lastCheckTime}` : ''}
-                  </Text>
-                </View>
-
-                <View style={styles.keysList}>
-                  {OPENROUTER_KEYS.map((k: string, index: number) => {
-                    const q = keyQuotas[index];
-                    const isRateLimited = rateLimitedIndices.includes(index);
-                    const isHealthy = q?.status === 'healthy';
-                    const isInvalid = q?.status === 'invalid';
-                    const isPrimary = activeKeyIndex === index;
-
-                    return (
-                      <View
-                        key={index}
-                        style={[
-                          styles.keyStatusCard,
-                          isPrimary && styles.keyStatusCardPrimary,
-                          isRateLimited && styles.keyStatusCardLimited
-                        ]}
-                      >
-                        <View style={styles.keyCardHeader}>
-                          <View style={styles.keyCardTitleRow}>
-                            <View
-                              style={[
-                                styles.keyDot,
-                                isRateLimited
-                                  ? styles.keyDotWarn
-                                  : isHealthy
-                                  ? styles.keyDotOk
-                                  : styles.keyDotErr
-                              ]}
-                            />
-                            <Text style={styles.keyCardTitle}>KUNCI API #{index + 1}</Text>
-                            {isPrimary && (
-                              <View style={styles.primaryPill}>
-                                <Text style={styles.primaryPillText}>AKTIF UTAMA</Text>
-                              </View>
-                            )}
-                          </View>
-
-                          <View
-                            style={[
-                              styles.keyBadge,
-                              isRateLimited
-                                ? styles.keyBadgeWarn
-                                : isHealthy
-                                ? styles.keyBadgeOk
-                                : styles.keyBadgeErr
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.keyBadgeText,
-                                isRateLimited
-                                  ? styles.keyBadgeTextWarn
-                                  : isHealthy
-                                  ? styles.keyBadgeTextOk
-                                  : styles.keyBadgeTextErr
-                              ]}
-                            >
-                              {isRateLimited
-                                ? 'LIMIT 429'
-                                : isHealthy
-                                ? 'SIAP PAKAI'
-                                : isInvalid
-                                ? 'EXPIRED (401)'
-                                : 'STANDBY'}
-                            </Text>
-                          </View>
-                        </View>
-
-                        <Text style={styles.keyMaskedText}>
-                          {q?.label || `${k.slice(0, 10)}...${k.slice(-6)}`}
-                        </Text>
-
-                        <View style={styles.keyDetailsRow}>
-                          <Text style={styles.keyDetailText}>
-                            Tier: <Text style={styles.keyDetailVal}>{q?.isFreeTier ? 'Free Tier' : 'Standar'}</Text>
-                          </Text>
-                          <Text style={styles.keyDetailText}>
-                            Pemakaian: <Text style={styles.keyDetailVal}>${(q?.usage || 0).toFixed(4)}</Text>
-                          </Text>
-                          <Text style={styles.keyDetailText}>
-                            Failover: <Text style={styles.keyDetailVal}>{enableFailover ? 'Aktif' : 'Off'}</Text>
-                          </Text>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              </View>
-
-              {/* Action Button: Refresh Quotas */}
               <Pressable
                 onPress={() => {
                   Haptics.selectionAsync().catch(() => {});
                   fetchQuotas();
                 }}
                 disabled={loadingQuota}
-                style={styles.refreshQuotaButton}
+                style={styles.refreshBtn}
               >
                 {loadingQuota ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <ActivityIndicator color="#FFFFFF" size="small" />
                 ) : (
-                  <>
-                    <Text style={styles.refreshQuotaIcon}>🔄</Text>
-                    <Text style={styles.refreshQuotaText}>Periksa Ulang Status Limit Sekarang</Text>
-                  </>
+                  <Text style={styles.refreshBtnText}>🔄 Periksa Status Kunci Sekarang</Text>
                 )}
               </Pressable>
             </ScrollView>
           </View>
         </View>
       </Modal>
+
+      {/* ==================================================================== */}
+      {/* MODEL PICKER MODAL                                                   */}
+      {/* ==================================================================== */}
+      <Modal
+        visible={showModelPickerModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowModelPickerModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modelPickerSheet, { paddingBottom: Math.max(insets.bottom + 10, 20) }]}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>Pilih Preset Model AI</Text>
+                <Text style={styles.modalHeaderSubtitle}>Konfigurasi penalaran dan kecepatan respon</Text>
+              </View>
+              <Pressable
+                onPress={() => setShowModelPickerModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.modelOptionsList}>
+              {[
+                {
+                  id: 'max' as AgentMode,
+                  title: 'Flagship Reasoning (MAX)',
+                  desc: 'Claude Sonnet 3.7 / 3.5 & GPT-6 Astra. Penalaran mendalam, analisis kode kompleks, dan analisis teknikal chart tingkat lanjut.'
+                },
+                {
+                  id: 'fast' as AgentMode,
+                  title: 'High-Speed Multimodal (FAST)',
+                  desc: 'Gemini 3.8 Flash & GPT-5.6 Luna. Respon kilat untuk percakapan harian, pencarian ide, dan membaca teks gambar cepat.'
+                },
+                {
+                  id: 'auto' as AgentMode,
+                  title: 'Dynamic Cascade (AUTO)',
+                  desc: 'Otomatis memilih model terbaik berdasarkan kompleksitas tugas dan ketersediaan kuota OpenRouter.'
+                }
+              ].map((item) => {
+                const active = mode === item.id;
+                return (
+                  <Pressable
+                    key={item.id}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setMode(item.id);
+                      setShowModelPickerModal(false);
+                    }}
+                    style={[styles.modelOptionCard, active && styles.modelOptionCardActive]}
+                  >
+                    <View style={styles.modelOptionHeader}>
+                      <Text style={[styles.modelOptionTitle, active && styles.modelOptionTitleActive]}>
+                        {item.title}
+                      </Text>
+                      {active && <Text style={styles.modelOptionCheck}>✓ Aktif</Text>}
+                    </View>
+                    <Text style={styles.modelOptionDesc}>{item.desc}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Media Attach Menu Sheet */}
+      <Modal
+        visible={showAttachMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAttachMenu(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setShowAttachMenu(false)}>
+          <View style={[styles.attachSheet, { paddingBottom: Math.max(insets.bottom + 10, 20) }]}>
+            <Text style={styles.attachSheetTitle}>Lampirkan Media</Text>
+            <Text style={styles.attachSheetSubtitle}>
+              Pilih tangkapan layar chart trading, dokumen, atau foto
+            </Text>
+
+            <View style={styles.attachOptionsRow}>
+              <Pressable onPress={handleTakePhoto} style={styles.attachOptionBtn}>
+                <Text style={styles.attachOptionIcon}>📷</Text>
+                <Text style={styles.attachOptionTitle}>Buka Kamera</Text>
+                <Text style={styles.attachOptionSub}>Potret layar chart langsung</Text>
+              </Pressable>
+
+              <Pressable onPress={handlePickGallery} style={styles.attachOptionBtn}>
+                <Text style={styles.attachOptionIcon}>🖼️</Text>
+                <Text style={styles.attachOptionTitle}>Galeri Gambar</Text>
+                <Text style={styles.attachOptionSub}>Pilih screenshot dari galeri</Text>
+              </Pressable>
+            </View>
+
+            <Pressable
+              onPress={() => setShowAttachMenu(false)}
+              style={styles.attachCancelBtn}
+            >
+              <Text style={styles.attachCancelText}>Batal</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Image Preview Modal */}
+      <Modal
+        visible={Boolean(previewImageUri)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPreviewImageUri(null)}
+      >
+        <View style={styles.fullscreenModal}>
+          <Pressable
+            onPress={() => setPreviewImageUri(null)}
+            style={styles.fullscreenCloseBtn}
+          >
+            <Text style={styles.fullscreenCloseText}>✕ Tutup</Text>
+          </Pressable>
+          {previewImageUri && (
+            <Image
+              source={{ uri: previewImageUri }}
+              style={styles.fullscreenImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
 
+// ============================================================================
+// STYLES (Clean, Modern, Dark Minimalist Aesthetics)
+// ============================================================================
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#07090E'
+    backgroundColor: '#090D14'
   },
   header: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    backgroundColor: '#0D111A',
     borderBottomWidth: 1,
-    borderBottomColor: '#161B26',
+    borderBottomColor: '#171E2D',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#0A0D14'
+    justifyContent: 'space-between'
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10
   },
-  novaOrb: {
+  drawerButton: {
     width: 38,
     height: 38,
-    borderRadius: 19,
-    backgroundColor: '#1E1B4B',
-    borderWidth: 1.5,
-    borderColor: '#6366F1',
+    borderRadius: 8,
+    backgroundColor: '#151C2B',
+    borderWidth: 1,
+    borderColor: '#222D44',
     alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#6366F1',
-    shadowOpacity: 0.5,
-    shadowRadius: 8
+    justifyContent: 'center'
   },
-  novaOrbIcon: {
-    color: '#A5B4FC',
+  drawerIconText: {
+    color: '#E2E8F0',
     fontSize: 20,
-    fontWeight: '900'
+    fontWeight: '600'
   },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6
+  brandTitleCol: {
+    justifyContent: 'center'
   },
   brandTitle: {
     color: '#F8FAFC',
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: 1.5
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: 1
   },
-  liveBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#0F291E',
-    borderColor: '#10B981',
-    borderWidth: 1,
+  modeIndicatorBadge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 10
-  },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10B981'
-  },
-  liveText: {
-    color: '#34D399',
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  statusSubtext: {
-    color: '#64748B',
-    fontSize: 11,
+    borderRadius: 6,
     marginTop: 2,
-    maxWidth: 160
+    alignSelf: 'flex-start'
+  },
+  modeBadgeGeneral: {
+    backgroundColor: '#1E293B'
+  },
+  modeBadgeTrading: {
+    backgroundColor: '#064E3B',
+    borderWidth: 1,
+    borderColor: '#059669'
+  },
+  modeIndicatorText: {
+    color: '#CBD5E1',
+    fontSize: 10,
+    fontWeight: '700'
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8
+    gap: 6
   },
-  modeToggleGroup: {
-    flexDirection: 'row',
-    backgroundColor: '#111622',
-    borderRadius: 14,
-    padding: 3,
+  headerIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#151C2B',
     borderWidth: 1,
-    borderColor: '#1E293B'
-  },
-  modeButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 10
-  },
-  modeButtonActive: {
-    backgroundColor: '#252D42'
-  },
-  modeButtonText: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '700'
-  },
-  modeButtonTextActive: {
-    color: '#F8FAFC'
-  },
-  iconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#111622',
-    borderWidth: 1,
-    borderColor: '#1E293B',
+    borderColor: '#222D44',
     alignItems: 'center',
     justifyContent: 'center'
   },
-  iconButtonText: {
-    fontSize: 14
+  headerIconText: {
+    fontSize: 15
+  },
+  newChatHeaderButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  newChatHeaderText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700'
   },
   chatScroll: {
     flex: 1
   },
   chatContent: {
-    padding: 16,
-    paddingBottom: 24,
-    gap: 16
-  },
-  heroWelcome: {
-    alignItems: 'center',
-    marginVertical: 18,
-    paddingHorizontal: 8
-  },
-  heroOrbContainer: {
-    width: 76,
-    height: 76,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16
-  },
-  heroOrbGlowOuter: {
-    position: 'absolute',
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: '#4338CA',
-    opacity: 0.35
-  },
-  heroOrbInner: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: '#1E1B4B',
-    borderWidth: 2,
-    borderColor: '#818CF8',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  heroOrbText: {
-    color: '#C7D2FE',
-    fontSize: 26,
-    fontWeight: '900'
-  },
-  heroTitle: {
-    color: '#F8FAFC',
-    fontSize: 20,
-    fontWeight: '900',
-    letterSpacing: 1,
-    textAlign: 'center'
-  },
-  heroSubtitle: {
-    color: '#94A3B8',
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: 'center',
-    marginTop: 6,
-    paddingHorizontal: 12
-  },
-  tagRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 14,
-    marginBottom: 20
-  },
-  tagPill: {
-    backgroundColor: '#111827',
-    borderWidth: 1,
-    borderColor: '#1F2937',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14
-  },
-  tagPillText: {
-    color: '#818CF8',
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  suggestionTitle: {
-    color: '#475569',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-    marginBottom: 10
-  },
-  quickPromptGrid: {
-    width: '100%',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    justifyContent: 'space-between'
-  },
-  quickPromptCard: {
-    width: '48%',
-    backgroundColor: '#0F1420',
-    borderWidth: 1,
-    borderColor: '#1E293B',
-    borderRadius: 14,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8
-  },
-  quickPromptIcon: {
-    fontSize: 18
-  },
-  quickPromptLabel: {
-    color: '#E2E8F0',
-    fontSize: 11,
-    fontWeight: '700'
+    padding: 14,
+    gap: 12
   },
   messageRow: {
     flexDirection: 'row',
-    gap: 10,
-    maxWidth: '100%'
+    maxWidth: '100%',
+    gap: 8
   },
   userRow: {
     justifyContent: 'flex-end'
@@ -1652,727 +1909,963 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start'
   },
   assistantAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1E1B4B',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#1E293B',
     borderWidth: 1,
-    borderColor: '#6366F1',
+    borderColor: '#334155',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 2
   },
   assistantAvatarText: {
     color: '#818CF8',
-    fontSize: 16,
-    fontWeight: '800'
+    fontSize: 14,
+    fontWeight: '900'
   },
-  bubble: {
-    borderRadius: 18,
-    padding: 14,
-    maxWidth: '85%'
+  messageBubble: {
+    maxWidth: '85%',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10
   },
   userBubble: {
-    backgroundColor: '#25215A',
+    backgroundColor: '#1E293B',
     borderWidth: 1,
-    borderColor: '#4338CA',
-    borderTopRightRadius: 4
+    borderColor: '#334155',
+    borderTopRightRadius: 2
   },
   assistantBubble: {
-    backgroundColor: '#0E131F',
+    backgroundColor: '#111724',
     borderWidth: 1,
-    borderColor: '#1C2638',
-    borderTopLeftRadius: 4
+    borderColor: '#1D263B',
+    borderTopLeftRadius: 2
   },
-  bubbleHeader: {
+  bubbleHeaderRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 8
+    marginBottom: 4
   },
-  roleLabel: {
-    color: '#94A3B8',
+  bubbleRoleText: {
+    color: '#64748B',
     fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1
-  },
-  modelTag: {
-    backgroundColor: '#172033',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#2D3748'
-  },
-  modelTagText: {
-    color: '#A5B4FC',
-    fontSize: 9,
     fontWeight: '700'
   },
-  timestampText: {
+  bubbleTimeText: {
     color: '#475569',
-    fontSize: 9,
-    marginLeft: 'auto'
+    fontSize: 9
   },
   bubbleImageContainer: {
-    marginBottom: 10,
-    borderRadius: 12,
+    marginBottom: 8,
+    borderRadius: 8,
     overflow: 'hidden',
-    backgroundColor: '#000',
-    borderWidth: 1,
-    borderColor: '#374151'
+    backgroundColor: '#000000'
   },
   bubbleImage: {
     width: '100%',
     height: 180,
-    borderRadius: 12
+    borderRadius: 8
   },
   imageOverlayBadge: {
     position: 'absolute',
     bottom: 6,
     right: 6,
-    backgroundColor: 'rgba(0,0,0,0.65)',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8
+    borderRadius: 6
   },
   imageOverlayText: {
-    color: '#fff',
+    color: '#E2E8F0',
     fontSize: 10,
     fontWeight: '600'
   },
-  formattedContainer: {
-    gap: 8
+  messageText: {
+    fontSize: 13.5,
+    lineHeight: 20
   },
   userMessageText: {
-    color: '#F8FAFC',
-    fontSize: 15,
-    lineHeight: 22
+    color: '#F8FAFC'
   },
-  aiMessageText: {
-    color: '#E2E8F0',
-    fontSize: 15,
-    lineHeight: 23
-  },
-  codeCard: {
-    backgroundColor: '#06080E',
-    borderWidth: 1,
-    borderColor: '#1E293B',
-    borderRadius: 10,
-    marginVertical: 6,
-    overflow: 'hidden'
-  },
-  codeHeader: {
-    backgroundColor: '#0F172A',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B'
-  },
-  codeLangText: {
-    color: '#60A5FA',
-    fontSize: 10,
-    fontWeight: '800'
-  },
-  codeCopyButton: {
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6
-  },
-  codeCopyText: {
-    color: '#CBD5E1',
-    fontSize: 10,
-    fontWeight: '700'
-  },
-  codeText: {
-    color: '#A5F3FC',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 12,
-    lineHeight: 18,
-    padding: 10
+  assistantMessageText: {
+    color: '#E2E8F0'
   },
   bubbleActionRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 10,
-    paddingTop: 8,
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 6,
     borderTopWidth: 1,
-    borderTopColor: '#162030'
+    borderTopColor: '#1A2338'
   },
   actionPill: {
-    backgroundColor: '#141D2E',
-    paddingHorizontal: 9,
+    backgroundColor: '#161F33',
+    paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#22314A'
+    borderRadius: 6
   },
   actionPillActive: {
-    backgroundColor: '#1E1B4B',
-    borderColor: '#6366F1'
+    backgroundColor: '#3730A3'
   },
   actionPillText: {
     color: '#94A3B8',
-    fontSize: 11,
-    fontWeight: '700'
+    fontSize: 10,
+    fontWeight: '600'
   },
   actionPillTextActive: {
-    color: '#A5B4FC'
+    color: '#FFFFFF'
   },
-  thinkingContainer: {
+  thinkingRow: {
     flexDirection: 'row',
-    gap: 10,
-    alignItems: 'center',
-    paddingHorizontal: 4
+    gap: 8,
+    alignItems: 'center'
   },
   thinkingBubble: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#0E131F',
+    backgroundColor: '#111724',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#1C2638',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 10
+    borderColor: '#1D263B'
   },
-  thinkingLabel: {
-    color: '#94A3B8',
+  thinkingText: {
+    color: '#818CF8',
     fontSize: 12
   },
   attachmentPreviewBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginHorizontal: 14,
-    marginBottom: 8,
-    backgroundColor: '#0F1626',
-    borderRadius: 14,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: '#22314C'
+    gap: 8,
+    backgroundColor: '#131B2B',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#202B42'
   },
   attachmentThumb: {
-    width: 44,
-    height: 44,
-    borderRadius: 8
+    width: 36,
+    height: 36,
+    borderRadius: 6
   },
   attachmentInfo: {
     flex: 1
   },
   attachmentName: {
-    color: '#F8FAFC',
+    color: '#F1F5F9',
     fontSize: 12,
     fontWeight: '700'
   },
   attachmentHint: {
-    color: '#818CF8',
-    fontSize: 10,
-    marginTop: 2
+    color: '#34D399',
+    fontSize: 10
   },
   attachmentRemoveButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#1E293B',
-    alignItems: 'center',
-    justifyContent: 'center'
+    padding: 6
   },
   attachmentRemoveText: {
     color: '#94A3B8',
-    fontSize: 13,
-    fontWeight: '800'
+    fontSize: 14
   },
   composerBar: {
-    marginHorizontal: 12,
-    marginBottom: 4,
-    backgroundColor: '#0D111A',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#1E2638',
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    padding: 6
-  },
-  attachButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#161D2B',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 4
+    backgroundColor: '#0D111A',
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#171E2D',
+    gap: 6
   },
-  attachButtonIcon: {
-    fontSize: 18
+  composerIconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#151C2B',
+    borderWidth: 1,
+    borderColor: '#222D44',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  composerMicActive: {
+    backgroundColor: '#4338CA',
+    borderColor: '#6366F1'
+  },
+  composerIconText: {
+    fontSize: 16
   },
   textInput: {
     flex: 1,
-    color: '#F8FAFC',
-    fontSize: 14,
-    lineHeight: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    minHeight: 40,
-    maxHeight: 120
-  },
-  sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#4F46E5',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#4F46E5',
-    shadowOpacity: 0.6,
-    shadowRadius: 6
-  },
-  sendButtonDisabled: {
-    opacity: 0.35,
-    backgroundColor: '#1E293B'
-  },
-  sendIcon: {
-    color: '#fff',
-    fontSize: 22,
-    fontWeight: '900',
-    marginTop: -2
-  },
-  footerNote: {
-    paddingVertical: 6,
-    alignItems: 'center'
-  },
-  footerNoteText: {
-    color: '#475569',
-    fontSize: 9,
-    fontWeight: '600'
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    justifyContent: 'flex-end'
-  },
-  modalSheet: {
-    backgroundColor: '#0D121D',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#222F44',
-    padding: 20,
-    paddingBottom: Platform.OS === 'ios' ? 36 : 24
-  },
-  sheetHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#334155',
-    alignSelf: 'center',
-    marginBottom: 16
-  },
-  sheetTitle: {
-    color: '#F8FAFC',
-    fontSize: 18,
-    fontWeight: '800',
-    textAlign: 'center'
-  },
-  sheetSubtitle: {
-    color: '#64748B',
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 20
-  },
-  sheetOptions: {
-    gap: 12,
-    marginBottom: 16
-  },
-  sheetButton: {
-    backgroundColor: '#141B29',
-    borderWidth: 1,
-    borderColor: '#1E293B',
-    borderRadius: 16,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14
-  },
-  sheetButtonIcon: {
-    fontSize: 26
-  },
-  sheetButtonTitle: {
-    color: '#F8FAFC',
-    fontSize: 14,
-    fontWeight: '700'
-  },
-  sheetButtonDesc: {
-    color: '#64748B',
-    fontSize: 11,
-    marginTop: 2
-  },
-  sheetCancelButton: {
-    backgroundColor: '#1E293B',
-    borderRadius: 14,
-    paddingVertical: 12,
-    alignItems: 'center'
-  },
-  sheetCancelText: {
-    color: '#CBD5E1',
-    fontSize: 14,
-    fontWeight: '700'
-  },
-  fullscreenModal: {
-    flex: 1,
-    backgroundColor: '#000',
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  fullscreenCloseButton: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    zIndex: 10,
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
+    minHeight: 38,
+    maxHeight: 120,
+    backgroundColor: '#151C2B',
+    borderRadius: 19,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 16
+    color: '#F8FAFC',
+    fontSize: 13.5,
+    borderWidth: 1,
+    borderColor: '#222D44'
   },
-  fullscreenCloseText: {
-    color: '#fff',
+  sendButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#1E293B',
+    opacity: 0.5
+  },
+  sendIconText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: 'bold'
+  },
+  failoverToast: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 99,
+    backgroundColor: '#065F46',
+    borderWidth: 1,
+    borderColor: '#10B981',
+    borderRadius: 8,
+    padding: 10,
+    alignItems: 'center'
+  },
+  failoverToastText: {
+    color: '#ECFDF5',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+
+  // SIDEBAR STYLES
+  sidebarBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    flexDirection: 'row'
+  },
+  sidebarOutsideOverlay: {
+    flex: 1
+  },
+  sidebarContent: {
+    width: Math.min(SCREEN_WIDTH * 0.82, 320),
+    backgroundColor: '#0B0F19',
+    borderRightWidth: 1,
+    borderRightColor: '#1A2234',
+    paddingHorizontal: 14,
+    flexDirection: 'column'
+  },
+  sidebarHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14
+  },
+  sidebarBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  sidebarLogoEmblem: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  sidebarLogoText: {
+    color: '#818CF8',
+    fontSize: 14,
+    fontWeight: 'bold'
+  },
+  sidebarBrandTitle: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 1
+  },
+  sidebarCloseButton: {
+    padding: 6
+  },
+  sidebarCloseText: {
+    color: '#94A3B8',
+    fontSize: 16
+  },
+  sidebarNewChatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginBottom: 14
+  },
+  sidebarNewChatIcon: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: 'bold'
+  },
+  sidebarNewChatText: {
+    color: '#F8FAFC',
     fontSize: 13,
     fontWeight: '700'
   },
-  fullscreenImage: {
-    width: '100%',
-    height: '80%'
+  sidebarSectionBox: {
+    marginBottom: 14
   },
-  // Quota & Rate Limit Monitor Styles (Mirip Tampilan Referensi Pengguna)
-  liveBadgeWarning: {
-    backgroundColor: '#3B1219',
-    borderColor: '#EF4444'
+  sidebarSectionLabel: {
+    color: '#475569',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 6
   },
-  liveDotWarning: {
-    backgroundColor: '#EF4444'
+  sidebarModeSwitcher: {
+    backgroundColor: '#111726',
+    borderRadius: 8,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: '#1D273D',
+    flexDirection: 'row'
   },
-  liveTextWarning: {
-    color: '#F87171'
+  sidebarModeItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 7,
+    borderRadius: 6
   },
-  iconButtonWarning: {
-    borderColor: '#EF4444',
-    backgroundColor: '#2D1217'
+  sidebarModeItemActive: {
+    backgroundColor: '#1E293B'
   },
-  failoverBannerContainer: {
-    backgroundColor: '#2A1711',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F59E0B',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  sidebarModeItemIcon: {
+    fontSize: 12
+  },
+  sidebarModeItemText: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  sidebarModeItemTextActive: {
+    color: '#F8FAFC'
+  },
+  sidebarNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 6
+  },
+  sidebarNavIcon: {
+    fontSize: 14
+  },
+  sidebarNavTitle: {
+    color: '#CBD5E1',
+    fontSize: 12.5,
+    fontWeight: '600'
+  },
+  sidebarHistoryContainer: {
+    flex: 1,
+    marginTop: 4
+  },
+  sidebarHistoryScroll: {
+    flex: 1
+  },
+  historyItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    marginBottom: 2
   },
-  failoverBannerText: {
-    color: '#FDE68A',
+  historyItemRowActive: {
+    backgroundColor: '#151C2C',
+    borderWidth: 1,
+    borderColor: '#232E47'
+  },
+  historyItemTextCol: {
+    flex: 1
+  },
+  historyTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  historyModeIcon: {
+    fontSize: 11
+  },
+  historyItemTitle: {
+    color: '#94A3B8',
     fontSize: 12,
     fontWeight: '600',
     flex: 1
   },
-  failoverBannerClose: {
-    padding: 4
-  },
-  failoverBannerCloseText: {
-    color: '#FDE68A',
-    fontSize: 14,
+  historyItemTitleActive: {
+    color: '#F8FAFC',
     fontWeight: '700'
   },
-  quotaSheet: {
-    backgroundColor: '#0D111A',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#20293A',
-    maxHeight: '92%',
-    paddingHorizontal: 18,
-    paddingTop: 12
-  },
-  quotaHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1A2234'
-  },
-  quotaHeaderTitle: {
-    color: '#F8FAFC',
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  quotaHeaderSubtitle: {
-    color: '#64748B',
-    fontSize: 12,
+  historyItemCount: {
+    color: '#475569',
+    fontSize: 10,
     marginTop: 2
   },
-  quotaCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1E293B',
-    alignItems: 'center',
-    justifyContent: 'center'
+  historyDeleteBtn: {
+    padding: 6
   },
-  quotaCloseText: {
-    color: '#CBD5E1',
-    fontSize: 14,
-    fontWeight: '700'
+  historyDeleteText: {
+    color: '#475569',
+    fontSize: 12
   },
-  quotaScrollArea: {
-    marginBottom: 8
-  },
-  settingToggleCard: {
-    backgroundColor: '#131826',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#1F293D',
-    padding: 16,
+  sidebarFooter: {
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#172033',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginBottom: 16
+    gap: 6
   },
-  settingToggleInfo: {
-    flex: 1
+  sidebarStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981'
   },
-  settingToggleTitle: {
-    color: '#F1F5F9',
-    fontSize: 14,
-    fontWeight: '700'
-  },
-  settingToggleDesc: {
+  sidebarFooterText: {
     color: '#64748B',
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 4
+    fontSize: 10
   },
-  modelSection: {
-    marginBottom: 18
+
+  // COMMON MODAL STYLES
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'flex-end'
   },
-  modelSectionHeader: {
+  modalHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8
-  },
-  modelSectionTitle: {
-    color: '#E2E8F0',
-    fontSize: 14,
-    fontWeight: '700'
-  },
-  infoBadge: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#1E293B',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 6
+    marginBottom: 12
   },
-  infoBadgeText: {
-    color: '#94A3B8',
-    fontSize: 11,
-    fontWeight: '600'
-  },
-  modelSectionMeta: {
-    color: '#64748B',
-    fontSize: 11
-  },
-  quotaCard: {
-    backgroundColor: '#121622',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#1E2638',
-    padding: 16
-  },
-  quotaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12
-  },
-  quotaTextCol: {
-    flex: 1
-  },
-  quotaRowTitle: {
-    color: '#F1F5F9',
-    fontSize: 13,
-    fontWeight: '700'
-  },
-  quotaRowSubtitle: {
-    color: '#64748B',
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: 3
-  },
-  quotaValueCol: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10
-  },
-  quotaPercentText: {
-    color: '#F1F5F9',
+  modalHeaderTitle: {
+    color: '#F8FAFC',
     fontSize: 16,
     fontWeight: '800'
   },
-  quotaPercentTextWarn: {
-    color: '#F59E0B'
+  modalHeaderSubtitle: {
+    color: '#64748B',
+    fontSize: 11,
+    marginTop: 2
   },
-  quotaCardDivider: {
-    height: 1,
-    backgroundColor: '#1A2132',
-    marginVertical: 14
+  modalCloseButton: {
+    padding: 6
   },
-  keysList: {
-    gap: 10
+  modalCloseText: {
+    color: '#94A3B8',
+    fontSize: 16
   },
-  keyStatusCard: {
-    backgroundColor: '#121622',
-    borderRadius: 12,
+
+  // PEDOMAN TRADING MODAL
+  sopModalContainer: {
+    backgroundColor: '#0D111A',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+    maxHeight: '85%',
     borderWidth: 1,
-    borderColor: '#1E2638',
+    borderColor: '#1D263B'
+  },
+  sopScrollView: {
+    marginVertical: 6
+  },
+  sopCard: {
+    backgroundColor: '#111726',
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10
+  },
+  sopCardHeading: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 6
+  },
+  sopCardText: {
+    color: '#94A3B8',
+    fontSize: 11.5,
+    lineHeight: 18
+  },
+  sopHighlight: {
+    color: '#38BDF8',
+    fontWeight: '700'
+  },
+  sopApplyButton: {
+    backgroundColor: '#059669',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 16
+  },
+  sopApplyText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '800'
+  },
+
+  // TRADINGVIEW LIVE MODAL
+  tvModalContainer: {
+    backgroundColor: '#0D111A',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+    maxHeight: '85%',
+    borderWidth: 1,
+    borderColor: '#1D263B'
+  },
+  tvSymbolTabs: {
+    flexDirection: 'row',
+    marginBottom: 12
+  },
+  tvSymbolTab: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#151C2C',
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#222D44'
+  },
+  tvSymbolTabActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#3B82F6'
+  },
+  tvSymbolTabText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  tvSymbolTabTextActive: {
+    color: '#FFFFFF'
+  },
+  tvTickerCard: {
+    backgroundColor: '#111726',
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12
+  },
+  tvTickerHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  tvTickerSymbol: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800'
+  },
+  tvChangeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6
+  },
+  tvChangeBadgeGreen: {
+    backgroundColor: '#064E3B'
+  },
+  tvChangeBadgeRed: {
+    backgroundColor: '#7F1D1D'
+  },
+  tvChangeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  tvPriceBig: {
+    color: '#FFFFFF',
+    fontSize: 26,
+    fontWeight: '900',
+    marginVertical: 8
+  },
+  tvStatsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: '#1A2338',
+    paddingTop: 10
+  },
+  tvStatItem: {
+    alignItems: 'center'
+  },
+  tvStatLabel: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  tvStatVal: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2
+  },
+  tvNoDataText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    textAlign: 'center',
+    padding: 20
+  },
+  tvOpenExternalButton: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  tvOpenExternalText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  tvNoticeBox: {
+    backgroundColor: '#101624',
+    borderWidth: 1,
+    borderColor: '#1B2438',
+    borderRadius: 8,
     padding: 12
   },
-  keyStatusCardPrimary: {
-    borderColor: '#4338CA',
-    backgroundColor: '#14182B'
+  tvNoticeTitle: {
+    color: '#E2E8F0',
+    fontSize: 11.5,
+    fontWeight: '700',
+    marginBottom: 4
   },
-  keyStatusCardLimited: {
-    borderColor: '#B45309',
-    backgroundColor: '#1E1712'
+  tvNoticeText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    lineHeight: 16
   },
-  keyCardHeader: {
+
+  // QUOTA MODAL
+  quotaModalContainer: {
+    backgroundColor: '#0D111A',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+    maxHeight: '85%',
+    borderWidth: 1,
+    borderColor: '#1D263B'
+  },
+  quotaScrollArea: {
+    marginVertical: 4
+  },
+  quotaSettingCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#111726',
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10
+  },
+  quotaSettingTitle: {
+    color: '#F8FAFC',
+    fontSize: 12.5,
+    fontWeight: '700'
+  },
+  quotaSettingSubtitle: {
+    color: '#64748B',
+    fontSize: 10.5,
+    lineHeight: 15,
+    marginTop: 2
+  },
+  quotaInfoBox: {
+    backgroundColor: '#0B132B',
+    borderWidth: 1,
+    borderColor: '#1C2E5E',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12
+  },
+  quotaInfoTitle: {
+    color: '#60A5FA',
+    fontSize: 11.5,
+    fontWeight: '700',
+    marginBottom: 4
+  },
+  quotaInfoBody: {
+    color: '#93C5FD',
+    fontSize: 11,
+    lineHeight: 16
+  },
+  quotaSectionTitle: {
+    color: '#475569',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 8
+  },
+  keyCard: {
+    backgroundColor: '#111726',
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8
+  },
+  keyCardPrimary: {
+    borderColor: '#3B82F6',
+    backgroundColor: '#111A2E'
+  },
+  keyCardLimited: {
+    borderColor: '#F59E0B'
+  },
+  keyCardTopRow: {
+    flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 6
+    alignItems: 'center',
+    marginBottom: 4
   },
   keyCardTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6
   },
-  keyDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4
   },
-  keyDotOk: {
+  statusDotOk: {
     backgroundColor: '#10B981'
   },
-  keyDotWarn: {
+  statusDotWarn: {
     backgroundColor: '#F59E0B'
   },
-  keyDotErr: {
+  statusDotErr: {
     backgroundColor: '#EF4444'
   },
-  keyCardTitle: {
+  keyCardLabel: {
     color: '#E2E8F0',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5
-  },
-  primaryPill: {
-    backgroundColor: '#312E81',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6
-  },
-  primaryPillText: {
-    color: '#A5B4FC',
-    fontSize: 9,
+    fontSize: 11.5,
     fontWeight: '800'
   },
-  keyBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8
+  primaryBadge: {
+    backgroundColor: '#1D4ED8',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4
   },
-  keyBadgeOk: {
-    backgroundColor: '#0F291E',
-    borderWidth: 1,
-    borderColor: '#10B981'
+  primaryBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 8.5,
+    fontWeight: '800'
   },
-  keyBadgeWarn: {
-    backgroundColor: '#35210D',
-    borderWidth: 1,
-    borderColor: '#F59E0B'
-  },
-  keyBadgeErr: {
-    backgroundColor: '#2F1217',
-    borderWidth: 1,
-    borderColor: '#EF4444'
-  },
-  keyBadgeText: {
+  keyStatusPill: {
     fontSize: 10,
     fontWeight: '800'
   },
-  keyBadgeTextOk: {
-    color: '#34D399'
+  keyStatusPillOk: {
+    color: '#10B981'
   },
-  keyBadgeTextWarn: {
-    color: '#FBBF24'
+  keyStatusPillWarn: {
+    color: '#F59E0B'
   },
-  keyBadgeTextErr: {
-    color: '#F87171'
+  keyStatusPillErr: {
+    color: '#EF4444'
   },
-  keyMaskedText: {
-    color: '#94A3B8',
+  keyMaskedString: {
+    color: '#64748B',
     fontSize: 11,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    marginBottom: 8
+    marginVertical: 4
   },
-  keyDetailsRow: {
+  keyMetaRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
+    justifyContent: 'space-between',
     borderTopWidth: 1,
-    borderTopColor: '#1A2132',
-    paddingTop: 6
+    borderTopColor: '#172033',
+    paddingTop: 6,
+    marginTop: 4
   },
-  keyDetailText: {
+  keyMetaText: {
     color: '#64748B',
-    fontSize: 10
+    fontSize: 10.5
   },
-  keyDetailVal: {
+  keyMetaVal: {
     color: '#CBD5E1',
-    fontWeight: '600'
+    fontWeight: '700'
   },
-  refreshQuotaButton: {
+  refreshBtn: {
     backgroundColor: '#1E293B',
     borderWidth: 1,
     borderColor: '#334155',
-    borderRadius: 14,
-    paddingVertical: 14,
-    flexDirection: 'row',
+    paddingVertical: 10,
+    borderRadius: 8,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 8,
+    marginTop: 4,
     marginBottom: 16
   },
-  refreshQuotaIcon: {
-    fontSize: 14
+  refreshBtnText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '700'
   },
-  refreshQuotaText: {
+
+  // MODEL PICKER
+  modelPickerSheet: {
+    backgroundColor: '#0D111A',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#1D263B'
+  },
+  modelOptionsList: {
+    gap: 10,
+    marginTop: 8
+  },
+  modelOptionCard: {
+    backgroundColor: '#111726',
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    borderRadius: 10,
+    padding: 12
+  },
+  modelOptionCardActive: {
+    borderColor: '#3B82F6',
+    backgroundColor: '#111A2E'
+  },
+  modelOptionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4
+  },
+  modelOptionTitle: {
+    color: '#E2E8F0',
+    fontSize: 12.5,
+    fontWeight: '700'
+  },
+  modelOptionTitleActive: {
+    color: '#60A5FA'
+  },
+  modelOptionCheck: {
+    color: '#3B82F6',
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  modelOptionDesc: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 16
+  },
+
+  // ATTACH MENU
+  attachSheet: {
+    backgroundColor: '#0D111A',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#1D263B'
+  },
+  attachSheetTitle: {
     color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  attachSheetSubtitle: {
+    color: '#64748B',
+    fontSize: 11,
+    marginTop: 2,
+    marginBottom: 14
+  },
+  attachOptionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12
+  },
+  attachOptionBtn: {
+    flex: 1,
+    backgroundColor: '#111726',
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center'
+  },
+  attachOptionIcon: {
+    fontSize: 22,
+    marginBottom: 6
+  },
+  attachOptionTitle: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  attachOptionSub: {
+    color: '#64748B',
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 2
+  },
+  attachCancelBtn: {
+    paddingVertical: 10,
+    alignItems: 'center'
+  },
+  attachCancelText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600'
+  },
+
+  // FULLSCREEN IMAGE PREVIEW
+  fullscreenModal: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  fullscreenCloseBtn: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8
+  },
+  fullscreenCloseText: {
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700'
+  },
+  fullscreenImage: {
+    width: '92%',
+    height: '75%'
   }
 });
