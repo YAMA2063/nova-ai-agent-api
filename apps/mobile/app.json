@@ -7,8 +7,21 @@
     "scheme": "nova",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-    "plugins": ["expo-router"],
-    "android": { "package": "com.nova.aiagent" },
-    "ios": { "bundleIdentifier": "com.nova.aiagent" }
+    "plugins": [
+      "expo-router",
+      "expo-status-bar"
+    ],
+    "android": {
+      "package": "com.nova.aiagent"
+    },
+    "ios": {
+      "bundleIdentifier": "com.nova.aiagent"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "52814ad1-8229-4d0f-a72d-f8149788179e"
+      }
+    }
   }
 }
