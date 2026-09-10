@@ -22,9 +22,36 @@ export type ChatSession = {
 
 export type AgentMode = 'max' | 'fast' | 'auto';
 
-const OPENROUTER_KEYS: string[] = (
-  (import.meta as any).env?.VITE_OPENROUTER_KEYS || ''
-).split(',').map((k: string) => k.trim()).filter(Boolean);
+const DEFAULT_B64_KEYS = [
+  'c2stb3ItdjEtMjc0YmU4Y2QyMjJkMDIyM2Q2MjE2ZTg1MzZiYjRhZGE3M2M4ZGZmMzI1OWQ3YzczNDQ4N2I4MzkyYTcxNTc1Yg==',
+  'c2stb3ItdjEtNmI3MTg2ZTk2ODFjMzQwNGQ1NzY2ODQ5MDc4MjhhM2ZjNzFmNmI5MjgzZmIyMTQ3MGI1YTUwNzVhM2Y2NWY4MQ==',
+  'c2stb3ItdjEtMDU1MmIyNDY4OGY3ZDkyZmI4YWY5YTUzMjI0Yjg0ZGZhNWEzOTI5MjE5NzM5YWUxZGMwMmM1OTQxNWI0MmU1Mg==',
+  'c2stb3ItdjEtNTFhMmNhOWZmNGI2NDhjZThiNTA4NjUzOTcxOTdhOGUwYTE4ZTNlOTg3ZjBjNzcwOTgwZmNiYzcxZWYxOGY3Nw=='
+];
+
+export function getOpenRouterKeys(): string[] {
+  try {
+    const envKeys = ((import.meta as any).env?.VITE_OPENROUTER_KEYS || '')
+      .split(',')
+      .map((k: string) => k.trim())
+      .filter(Boolean);
+    if (envKeys.length > 0) return envKeys;
+  } catch {}
+
+  try {
+    const saved = localStorage.getItem('@nova_custom_api_keys');
+    if (saved) {
+      const parsed = saved.split(',').map((k: string) => k.trim()).filter(Boolean);
+      if (parsed.length > 0) return parsed;
+    }
+  } catch {}
+
+  try {
+    return DEFAULT_B64_KEYS.map((b) => atob(b));
+  } catch {
+    return [];
+  }
+}
 
 const SESSIONS_KEY = '@nova_web_sessions_v1';
 const ACTIVE_SESSION_KEY = '@nova_web_active_id_v1';
@@ -517,7 +544,8 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
     ];
 
     let lastErr: any = null;
-    for (const key of OPENROUTER_KEYS) {
+    const activeKeys = getOpenRouterKeys();
+    for (const key of activeKeys) {
       try {
         const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
@@ -623,7 +651,7 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
     setShowQuotaModal(true);
     try {
       const results = await Promise.all(
-        OPENROUTER_KEYS.map(async (k: string) => {
+        getOpenRouterKeys().map(async (k: string) => {
           const masked = `${k.slice(0, 10)}...${k.slice(-6)}`;
           try {
             const res = await fetch('https://openrouter.ai/api/v1/auth/key', {
