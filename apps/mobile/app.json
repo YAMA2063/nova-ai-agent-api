@@ -18,8 +18,18 @@
         }
       ]
     ],
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#07090E"
+    },
     "android": {
-      "package": "com.nova.aiagent"
+      "package": "com.nova.aiagent",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#07090E"
+      }
     },
     "ios": {
       "bundleIdentifier": "com.nova.aiagent"

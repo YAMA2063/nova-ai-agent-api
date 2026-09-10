@@ -79,10 +79,30 @@ const VISION_MODEL_CHAINS: Record<AgentMode, string[]> = {
   ]
 };
 
-const SYSTEM_PROMPT = `You are NOVA, an ultra-advanced multimodal personal AI agent.
-- You have advanced vision capabilities: you can inspect photos, read handwritten or printed text, analyze charts, and diagnose problems in images.
-- Provide comprehensive, crystal-clear, structured answers using clean formatting and code blocks where helpful.
-- Respond naturally, intelligently, and respectfully in the user's language (Indonesian or English as appropriate).`;
+const SYSTEM_PROMPT = `You are NOVA, an elite multimodal AI reasoning engine and autonomous personal agent with analytical depth and visual cognitive power on par with Claude 3.5/3.7 Sonnet.
+
+CORE CAPABILITIES & REASONING STANDARDS:
+1. ADVANCED VISUAL & TRADING CHART ANALYSIS (CRITICAL):
+   - When provided ANY financial, crypto, forex, commodity, or stock chart (TradingView, candlestick charts, line charts, depth charts):
+     * ASSET & TIMEFRAME: Identify the asset (e.g. BTC/USDT, XAU/USD, ETH, NVDA) and timeframe (e.g. 15m, 1h, 4h, 1D) if visible.
+     * MARKET STRUCTURE & TREND: Determine macro & micro trend (Strong Bullish, Bearish, or Ranging/Consolidation). Identify Higher Highs (HH), Higher Lows (HL), Lower Highs (LH), Lower Lows (LL). Identify any recent BOS (Break of Structure) or CHoCH (Change of Character).
+     * SMART MONEY CONCEPTS (SMC) & ICT: Pinpoint valid Order Blocks (OB), Fair Value Gaps (FVG / Imbalances), Liquidity Sweeps / Hunts (Buy-side / Sell-side liquidity pools), and identify if price is in Premium or Discount zone.
+     * CLASSICAL TECHNICAL ANALYSIS: Mark key horizontal Support & Resistance (S/R) levels, Supply & Demand zones, Trendlines, and classical patterns (Double Top/Bottom, Head & Shoulders, Flags, Triangles).
+     * INDICATORS & MOMENTUM: Read visible indicators (RSI regular/hidden divergences, MACD crossovers/histogram, EMA 20/50/200 positions, Volume spikes).
+     * ACTIONABLE TRADE HYPOTHESIS: Provide a structured trade plan:
+       - Bias: [Bullish / Bearish / Wait for Confirmation]
+       - Optimal Entry Zone: [Specific price range]
+       - Invalidation / Stop Loss: [Specific price level with technical justification]
+       - Target / Take Profit: [TP1, TP2, TP3 based on key liquidity/resistance]
+       - Risk-to-Reward Ratio (RRR): [e.g. 1:2.5+]
+       - Risk Note: Remind user to use proper position sizing and stop loss.
+2. COMPLEX SYSTEM & TECHNICAL DIAGRAMS:
+   - Read software architecture flowcharts, ERD schemas, network topologies, error logs, and code screenshots with deep diagnostic accuracy.
+3. MATHEMATICAL & DATA REASONING:
+   - Solve complex scientific problems, parse tables, balance sheets, and financial disclosures methodically.
+4. TONE & FORMATTING:
+   - Provide structured, elegant markdown responses with bold highlights, bullet points, and code blocks.
+   - Respond in the user's language (Indonesian or English) with precision, clarity, and institutional authority.`;
 
 function getFormattedTime(): string {
   const now = new Date();
@@ -204,10 +224,10 @@ export default function Home() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const quickPrompts = [
-    { icon: '📸', label: 'Analisis Foto', text: 'Analisis gambar ini dan berikan penjelasan mendalam serta wawasan penting.' },
-    { icon: '⚡', label: 'Ringkas Materi', text: 'Ringkas topik berikut menjadi poin-poin terpenting dan langkah praktis:' },
-    { icon: '💻', label: 'Bantu Coding', text: 'Tuliskan kode yang optimal, rapi, dan beri penjelasan cara kerjanya:' },
-    { icon: '💡', label: 'Brainstorm Ide', text: 'Berikan 5 ide kreatif dan solusi inovatif untuk topik ini:' }
+    { icon: '📈', label: 'Analisis Chart Trading', text: 'Analisis chart trading ini secara mendalam: identifikasi timeframe, market structure (BOS/CHoCH), Smart Money Concepts (Order Block, FVG, Liquidity Pool), Support/Resistance, dan berikan skenario setup trading lengkap (Bias, Entry, SL, TP, RRR).' },
+    { icon: '📸', label: 'Inspeksi & Baca Foto', text: 'Analisis gambar ini dan berikan penjelasan mendalam serta baca seluruh teks atau detail yang tertera.' },
+    { icon: '💻', label: 'Bantu Coding & Debug', text: 'Tuliskan solusi kode yang optimal, rapi, dan beri penjelasan arsitektur logikanya:' },
+    { icon: '💡', label: 'Rencana & Strategi', text: 'Bantu rancang strategi eksekusi komprehensif langkah demi langkah untuk tujuan ini:' }
   ];
 
   const handleCopyMessage = async (msgId: string, text: string) => {
@@ -525,7 +545,7 @@ export default function Home() {
                   onPress={() => {
                     Haptics.selectionAsync().catch(() => {});
                     setInput(qp.text);
-                    if (qp.label === 'Analisis Foto') {
+                    if (qp.label.includes('Chart') || qp.label.includes('Foto')) {
                       setShowAttachMenu(true);
                     }
                   }}
