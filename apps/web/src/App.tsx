@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { marked } from 'marked';
 import './App.css';
 
 // Types
@@ -262,11 +263,25 @@ export async function fetchLiveMarketData(symbol: string) {
   }
 }
 
+// Markdown Formatter Component: Clean typography, zero raw asterisks
+function MarkdownContent({ content }: { content: string }) {
+  const html = useMemo(() => {
+    try {
+      return marked.parse(content || '', { breaks: true, gfm: true }) as string;
+    } catch {
+      return content || '';
+    }
+  }, [content]);
+
+  return <div className="message-body prose" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 export default function App() {
   // Chat Sessions
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Active Chat State
   const [input, setInput] = useState('');
@@ -393,7 +408,7 @@ export default function App() {
 
   const handleDeleteSession = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Hapus sesi obrolan ini?')) return;
+    e.preventDefault();
     const updated = sessions.filter((s) => s.id !== id);
     if (updated.length === 0) {
       handleNewChat();
@@ -401,6 +416,28 @@ export default function App() {
     }
     const nextId = currentSessionId === id ? updated[0].id : currentSessionId;
     saveSessions(updated, nextId);
+  };
+
+  const handleClearAllSessions = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const initialSession: ChatSession = {
+      id: `session_${Date.now()}`,
+      title: 'Percakapan Baru',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      mode: chatMode,
+      messages: [
+        {
+          id: 'welcome',
+          role: 'assistant',
+          content: 'Halo! Saya **NOVA**, asisten AI Anda. Seluruh riwayat obrolan telah dibersihkan. Apa yang ingin kita diskusikan hari ini?',
+          modelUsed: 'Ready',
+          timestamp: getFormattedTime()
+        }
+      ]
+    };
+    saveSessions([initialSession], initialSession.id);
   };
 
   // Speech Recognition (Voice Typing in Web Browser)
@@ -737,14 +774,29 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
       {/* ==================================================================== */}
       {/* SIDEBAR                                                              */}
       {/* ==================================================================== */}
-      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+      <aside className={`sidebar ${sidebarOpen ? 'open' : ''} ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-brand-row">
           <div className="brand-logo-group">
             <div className="brand-emblem">✦</div>
             <div className="brand-text">NOVA AGENT</div>
-            <span className="brand-version">WEB</span>
+            <span className="brand-version">PRO</span>
           </div>
-          <button className="sidebar-close-btn" onClick={() => setSidebarOpen(false)}>✕</button>
+          <div className="sidebar-window-controls">
+            <button
+              className="sidebar-collapse-btn"
+              onClick={() => setSidebarCollapsed(true)}
+              title="Sembunyikan Sidebar"
+            >
+              ◧
+            </button>
+            <button
+              className="sidebar-close-btn"
+              onClick={() => setSidebarOpen(false)}
+              title="Tutup Menu"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         <button className="new-chat-btn" onClick={handleNewChat}>
@@ -786,7 +838,19 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
           </button>
         </div>
 
-        <div className="sidebar-section-title">Riwayat Obrolan</div>
+        <div className="sidebar-history-header">
+          <div className="sidebar-section-title">Riwayat Obrolan ({sessions.length})</div>
+          {sessions.length > 1 && (
+            <button
+              className="clear-all-sessions-btn"
+              onClick={handleClearAllSessions}
+              title="Hapus semua riwayat percakapan"
+            >
+              Hapus Semua
+            </button>
+          )}
+        </div>
+
         <div className="history-scroll-area">
           {sessions.map((s) => {
             const isActive = s.id === currentSessionId;
@@ -808,7 +872,7 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
                 <button
                   className="history-delete-btn"
                   onClick={(e) => handleDeleteSession(s.id, e)}
-                  title="Hapus obrolan"
+                  title="Hapus obrolan ini"
                 >
                   ✕
                 </button>
@@ -830,12 +894,24 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
         {/* Header */}
         <header className="main-header">
           <div className="main-header-left">
-            <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>☰</button>
+            <button
+              className="header-sidebar-toggle-btn"
+              onClick={() => {
+                if (window.innerWidth <= 768) {
+                  setSidebarOpen(!sidebarOpen);
+                } else {
+                  setSidebarCollapsed(!sidebarCollapsed);
+                }
+              }}
+              title={sidebarCollapsed ? 'Tampilkan Sidebar' : 'Sembunyikan Sidebar'}
+            >
+              ☰
+            </button>
             <div
               className={`header-mode-badge ${chatMode}`}
               onClick={() => handleToggleMode(chatMode === 'general' ? 'trading' : 'general')}
             >
-              {chatMode === 'trading' ? '📈 Mode Trading Neurobro (Aktif)' : '🧠 Asisten AI Umum'}
+              {chatMode === 'trading' ? '📈 Mode Trading Neurobro' : '🧠 Asisten AI Umum'}
             </div>
           </div>
 
@@ -878,7 +954,11 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
                   </div>
                 )}
 
-                <div className="message-body">{m.content}</div>
+                {m.role === 'assistant' ? (
+                  <MarkdownContent content={m.content} />
+                ) : (
+                  <div className="message-body user-body">{m.content}</div>
+                )}
 
                 {m.role === 'assistant' && (
                   <div className="message-actions-row">
