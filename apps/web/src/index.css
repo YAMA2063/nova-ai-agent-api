@@ -1,37 +1,86 @@
+/* ============================================================================
+   NOVA — DESIGN TOKENS
+   Ultra-Luxury Enterprise / Private Wealth / Institutional Trading Terminal
+   Palette logic:
+     - Obsidian/void backgrounds carry the depth
+     - Champagne Gold is spent in ONE place: brand identity + hero CTAs
+     - Electric Sapphire marks interactivity (focus, selection, active states)
+     - Emerald / Rose are reserved strictly for market semantics (bull / bear)
+   ============================================================================ */
+
 :root {
-  --bg-main: #090D14;
-  --bg-surface: #0D111A;
-  --bg-card: #111726;
-  --bg-card-hover: #151D30;
-  --bg-input: #141B2B;
-  --border-subtle: #172033;
-  --border-card: #1E273D;
-  --border-active: #3B82F6;
-  
-  --text-primary: #F8FAFC;
-  --text-secondary: #94A3B8;
-  --text-muted: #64748B;
-  
-  --accent-blue: #2563EB;
-  --accent-blue-hover: #1D4ED8;
+  /* Surfaces */
+  --bg-void: #030407;
+  --bg-obsidian: #06080D;
+  --bg-panel: #0A0D14;
+  --bg-panel-raised: #11151F;
+  --bg-input: #0D1017;
+
+  /* Aliases for maximum compatibility */
+  --bg-main: var(--bg-void);
+  --bg-surface: var(--bg-obsidian);
+  --bg-card: var(--bg-panel);
+  --bg-card-hover: var(--bg-panel-raised);
+
+  /* Hairlines (glass, not borders) */
+  --hairline: rgba(255, 255, 255, 0.06);
+  --hairline-strong: rgba(255, 255, 255, 0.12);
+  --hairline-gold: rgba(212, 175, 55, 0.28);
+  --hairline-sapphire: rgba(76, 126, 255, 0.35);
+
+  --border-subtle: var(--hairline);
+  --border-card: var(--hairline);
+  --border-active: var(--sapphire);
+
+  /* Ink */
+  --text-primary: #F4F0E6;
+  --text-secondary: #9BA3AF;
+  --text-muted: #545C6B;
+
+  /* Champagne Gold — the one luxury indulgence */
+  --gold: #D4AF37;
+  --gold-soft: #E8C766;
+  --gold-dim: rgba(212, 175, 55, 0.12);
+
+  /* Electric Sapphire — interaction */
+  --sapphire: #4C7EFF;
+  --sapphire-deep: #2748A8;
+  --sapphire-dim: rgba(76, 126, 255, 0.14);
+
+  --accent-blue: var(--sapphire);
+  --accent-blue-hover: #3B6EE8;
   --accent-indigo: #6366F1;
-  --accent-emerald: #10B981;
-  --accent-emerald-dark: #064E3B;
-  --accent-amber: #F59E0B;
-  --accent-rose: #EF4444;
-  
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
-  
+
+  /* Market semantics */
+  --bull: #17B978;
+  --bull-dim: rgba(23, 185, 120, 0.14);
+  --bear: #E5484D;
+  --bear-dim: rgba(229, 72, 77, 0.14);
+  --amber: #E8A33D;
+
+  --accent-emerald: var(--bull);
+  --accent-emerald-dark: var(--bull-dim);
+  --accent-rose: var(--bear);
+
+  /* Type */
+  --font-sans: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Roboto Mono', ui-monospace, monospace;
+
+  /* Radius */
   --radius-sm: 6px;
   --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
-  
-  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.15);
-  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.45);
-  --transition-fast: 0.15s ease;
-  --transition-normal: 0.25s ease;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+
+  /* Glass + shadow */
+  --blur-glass: 20px;
+  --shadow-ambient: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --shadow-gold-glow: 0 0 0 1px var(--hairline-gold), 0 8px 28px rgba(212, 175, 55, 0.14);
+  --shadow-sapphire-glow: 0 0 0 3px var(--sapphire-dim), 0 4px 18px rgba(76, 126, 255, 0.22);
+
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * {
@@ -39,12 +88,13 @@
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body, html {
   width: 100%;
   height: 100%;
-  background-color: var(--bg-main);
+  background-color: var(--bg-void);
   color: var(--text-primary);
   font-family: var(--font-sans);
   overflow: hidden;
@@ -54,12 +104,16 @@ body, html {
   width: 100%;
   height: 100%;
   display: flex;
+  background:
+    radial-gradient(ellipse 900px 500px at 12% -8%, rgba(212, 175, 55, 0.05), transparent 55%),
+    radial-gradient(ellipse 700px 500px at 88% 108%, rgba(76, 126, 255, 0.045), transparent 55%),
+    var(--bg-void);
 }
 
-/* Custom Scrollbars */
+/* Ultra-slim luxury scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -67,35 +121,41 @@ body, html {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1F293D;
+  background: rgba(255, 255, 255, 0.10);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: linear-gradient(180deg, var(--gold-soft), var(--gold));
 }
 
-/* Base Utility Classes */
 button {
   cursor: pointer;
   border: none;
   background: none;
   font-family: var(--font-sans);
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--sapphire);
+  outline-offset: 2px;
 }
 
 input, textarea {
   font-family: var(--font-sans);
 }
 
-/* Pulsing Glow Animation */
 @keyframes pulseGlow {
   0%, 100% {
-    opacity: 0.8;
+    opacity: 0.75;
     transform: scale(1);
   }
   50% {
     opacity: 1;
-    transform: scale(1.05);
+    transform: scale(1.06);
   }
 }
 
@@ -110,6 +170,19 @@ input, textarea {
   }
 }
 
+@keyframes shimmerGold {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.25s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
