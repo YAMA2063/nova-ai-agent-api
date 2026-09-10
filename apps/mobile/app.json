@@ -3,7 +3,7 @@
     "name": "NOVA AI Agent",
     "slug": "nova-ai-agent",
     "version": "0.1.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "scheme": "nova",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,

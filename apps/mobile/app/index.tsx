@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -15,6 +14,7 @@ import {
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -25,8 +25,6 @@ import * as Clipboard from 'expo-clipboard';
 import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AgentMode } from '@nova/shared';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export type AttachmentType = 'image' | 'video';
 
@@ -146,10 +144,206 @@ export async function fetchKeyQuota(key: string): Promise<KeyQuotaInfo> {
 }
 
 // ============================================================================
+// AUTOMATED TOP-DOWN MTF MARKET DATA & INDICATOR ENGINE (MCP FOR MOBILE)
+// ============================================================================
+export type TopDownMarketData = {
+  symbol: string;
+  price: number;
+  change24h: number;
+  high24h: number;
+  low24h: number;
+  volume24h: number;
+  h4: {
+    lastClose: number;
+    high30: number;
+    low30: number;
+    trend: 'BULLISH' | 'BEARISH' | 'SIDEWAYS';
+  };
+  m15: {
+    lastClose: number;
+    high30: number;
+    low30: number;
+    rsi14: number;
+    volumeMa20: number;
+    lastVolume: number;
+    volumeRatio: number;
+  };
+  m5: {
+    lastClose: number;
+    rsi14: number;
+    volumeMa20: number;
+    lastVolume: number;
+    candleType: 'BULLISH_CLOSE' | 'BEARISH_CLOSE' | 'NEUTRAL';
+  };
+  btcWeather?: {
+    price: number;
+    change24h: number;
+    status: 'BULLISH' | 'DUMP_ALERT' | 'NORMAL';
+  };
+};
+
+function calculateRsi(closes: number[], period: number = 14): number {
+  if (closes.length < period + 1) return 50;
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) {
+      avgGain = (avgGain * (period - 1) + diff) / period;
+      avgLoss = (avgLoss * (period - 1)) / period;
+    } else {
+      avgGain = (avgGain * (period - 1)) / period;
+      avgLoss = (avgLoss * (period - 1) + Math.abs(diff)) / period;
+    }
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return Math.round((100 - 100 / (1 + rs)) * 100) / 100;
+}
+
+function calculateMa(volumes: number[], period: number = 20): number {
+  if (volumes.length === 0) return 0;
+  const slice = volumes.slice(-period);
+  const sum = slice.reduce((a, b) => a + b, 0);
+  return Math.round((sum / slice.length) * 100) / 100;
+}
+
+export async function fetchLiveTopDownData(symbol: string): Promise<TopDownMarketData | null> {
+  try {
+    const sym = symbol.toUpperCase().replace('/', '').trim();
+    const tickerRes = await fetch(`https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${sym}`);
+    if (!tickerRes.ok) return null;
+    const ticker = await tickerRes.json();
+
+    const [h4Res, m15Res, m5Res, btcRes] = await Promise.all([
+      fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${sym}&interval=4h&limit=25`),
+      fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${sym}&interval=15m&limit=25`),
+      fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${sym}&interval=5m&limit=25`),
+      sym !== 'BTCUSDT'
+        ? fetch(`https://data-api.binance.vision/api/v3/ticker/24hr?symbol=BTCUSDT`)
+        : Promise.resolve(null)
+    ]);
+
+    const h4Data = await h4Res.json();
+    const m15Data = await m15Res.json();
+    const m5Data = await m5Res.json();
+    const btcTicker = btcRes ? await btcRes.json() : null;
+
+    const h4Closes = h4Data.map((k: any) => parseFloat(k[4]));
+    const h4Highs = h4Data.map((k: any) => parseFloat(k[2]));
+    const h4Lows = h4Data.map((k: any) => parseFloat(k[3]));
+    const h4High = Math.max(...h4Highs);
+    const h4Low = Math.min(...h4Lows);
+    const h4Close = h4Closes[h4Closes.length - 1];
+    const h4Trend = h4Close > (h4High + h4Low) / 2 ? 'BULLISH' : 'BEARISH';
+
+    const m15Closes = m15Data.map((k: any) => parseFloat(k[4]));
+    const m15Highs = m15Data.map((k: any) => parseFloat(k[2]));
+    const m15Lows = m15Data.map((k: any) => parseFloat(k[3]));
+    const m15Volumes = m15Data.map((k: any) => parseFloat(k[5]));
+    const m15Rsi = calculateRsi(m15Closes, 14);
+    const m15VolMa = calculateMa(m15Volumes, 20);
+    const m15LastVol = m15Volumes[m15Volumes.length - 1];
+    const m15VolRatio = m15VolMa > 0 ? Math.round((m15LastVol / m15VolMa) * 100) / 100 : 1;
+
+    const m5Closes = m5Data.map((k: any) => parseFloat(k[4]));
+    const m5Opens = m5Data.map((k: any) => parseFloat(k[1]));
+    const m5Volumes = m5Data.map((k: any) => parseFloat(k[5]));
+    const m5Rsi = calculateRsi(m5Closes, 14);
+    const m5VolMa = calculateMa(m5Volumes, 20);
+    const m5LastVol = m5Volumes[m5Volumes.length - 1];
+    const m5LastOpen = m5Opens[m5Opens.length - 1];
+    const m5LastClose = m5Closes[m5Closes.length - 1];
+    const m5Candle =
+      m5LastClose > m5LastOpen
+        ? 'BULLISH_CLOSE'
+        : m5LastClose < m5LastOpen
+        ? 'BEARISH_CLOSE'
+        : 'NEUTRAL';
+
+    let btcWeather;
+    if (btcTicker) {
+      const change = parseFloat(btcTicker.priceChangePercent);
+      btcWeather = {
+        price: parseFloat(btcTicker.lastPrice),
+        change24h: change,
+        status:
+          change < -3.5
+            ? ('DUMP_ALERT' as const)
+            : change > 2.0
+            ? ('BULLISH' as const)
+            : ('NORMAL' as const)
+      };
+    }
+
+    return {
+      symbol: sym,
+      price: parseFloat(ticker.lastPrice),
+      change24h: parseFloat(ticker.priceChangePercent),
+      high24h: parseFloat(ticker.highPrice),
+      low24h: parseFloat(ticker.lowPrice),
+      volume24h: parseFloat(ticker.volume),
+      h4: {
+        lastClose: h4Close,
+        high30: h4High,
+        low30: h4Low,
+        trend: h4Trend
+      },
+      m15: {
+        lastClose: m15Closes[m15Closes.length - 1],
+        high30: Math.max(...m15Highs),
+        low30: Math.min(...m15Lows),
+        rsi14: m15Rsi,
+        volumeMa20: m15VolMa,
+        lastVolume: m15LastVol,
+        volumeRatio: m15VolRatio
+      },
+      m5: {
+        lastClose: m5LastClose,
+        rsi14: m5Rsi,
+        volumeMa20: m5VolMa,
+        lastVolume: m5LastVol,
+        candleType: m5Candle
+      },
+      btcWeather
+    };
+  } catch (err) {
+    console.error('Error fetching live market data:', err);
+    return null;
+  }
+}
+
+export function formatMarketDataPrompt(data: TopDownMarketData): string {
+  return `[DATA REAL-TIME ABSOLUT LIVE CHART & INDIKATOR BINANCE (NO HALLUCINATION)]:
+• Aset: ${data.symbol} | Harga Saat Ini: $${data.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} | Perubahan 24h: ${data.change24h > 0 ? '+' : ''}${data.change24h.toFixed(2)}%
+• Rentang 24 Jam: Low $${data.low24h.toFixed(2)} — High $${data.high24h.toFixed(2)} | Volume 24h: ${data.volume24h.toFixed(1)}
+• Multi-Timeframe (Top-Down):
+  - [H4 BIAS]: Last Close $${data.h4.lastClose.toFixed(2)} | Range: $${data.h4.low30.toFixed(2)} - $${data.h4.high30.toFixed(2)} | Arah Makro: ${data.h4.trend}
+  - [M15 SETUP]: Last Close $${data.m15.lastClose.toFixed(2)} | RSI(14): ${data.m15.rsi14} | Volume: ${data.m15.lastVolume.toFixed(2)} (Rasio MA20: ${data.m15.volumeRatio}x)
+  - [M5 EKSEKUSI]: Last Close $${data.m5.lastClose.toFixed(2)} | Candle Terakhir: ${data.m5.candleType} | RSI(14): ${data.m5.rsi14}
+${data.btcWeather ? `• [CUACA BITCOIN INDEKS]: BTC Price $${data.btcWeather.price.toFixed(2)} (${data.btcWeather.change24h > 0 ? '+' : ''}${data.btcWeather.change24h.toFixed(2)}%) | Status Cuaca: ${data.btcWeather.status}` : ''}
+
+Instruksi Analisis:
+Jalankan evaluasi sesuai Pedoman Baku Neurobro:
+1. Tentukan Bias Utama H4
+2. Identifikasi Area Setup M15 & Validasi Volume Breakout
+3. Verifikasi Konfirmasi Entry M5 & Rejeksi
+4. Hitung Rencana Posisi: Entry, SL di luar invalidasi absolut, TP (R:R minimal 1:2), dan Angka Batas Batal
+5. Nyatakan HANYA SATU panggilan: BUY, SELL, atau HOLD.`;
+}
+
+// ============================================================================
 // SYSTEM PROMPTS: GENERAL ASSISTANT vs NEUROBRO TRADING DIRECTIVE
 // ============================================================================
-
-// 1. Asisten AI Umum (Default) — Cerdas, fleksibel, tanpa jargon trading jika tidak ditanya
 const GENERAL_SYSTEM_PROMPT = `# Identitas & Prinsip NOVA (General Intelligence)
 Kamu adalah NOVA, asisten AI otonom mutakhir yang berfokus pada kecerdasan komprehensif, penalaran logis, rekayasa kode, penulisan mendalam, dan analisis visual.
 
@@ -159,7 +353,6 @@ Kamu adalah NOVA, asisten AI otonom mutakhir yang berfokus pada kecerdasan kompr
 3. Bebas Asumsi Finansial: Jangan paksa menggunakan istilah trading atau pasar keuangan jika pengguna tidak menanyakannya secara spesifik.
 4. Epistemik Jujur: Jika fakta tidak pasti, nyatakan keterbatasan informasi secara transparan.`;
 
-// 2. Neurobro Trading Directive — Diambil langsung dari AI YM_Trading (pedoman_trading.md & nova_trading.md)
 const NEUROBRO_TRADING_PROMPT = `# NOVA Trading Agent — Pedoman & Aturan Baku Neurobro
 
 Dokumen ini adalah buku pedoman eksekusi dan aturan baku mutlak yang WAJIB ditaati dalam menganalisis chart trading, pasar kripto, forex, atau saham.
@@ -262,7 +455,6 @@ function getFormattedTime(): string {
   return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-// API Call Engine
 async function callOpenRouterDirectly(
   history: UiMessage[],
   prompt: string,
@@ -380,23 +572,14 @@ async function callOpenRouterDirectly(
   throw lastError || new Error('Gagal menghubungi OpenRouter.');
 }
 
-// Live Binance ticker fetcher
-async function fetchBinanceTicker(symbol: string) {
-  try {
-    const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 export default function Home() {
   const insets = useSafeAreaInsets();
   const scrollViewRef = useRef<ScrollView>(null);
+  const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = useWindowDimensions();
+  const isLandscape = SCREEN_WIDTH > SCREEN_HEIGHT;
 
   // Sessions & History
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -420,10 +603,10 @@ export default function Home() {
   const [showTradingViewModal, setShowTradingViewModal] = useState(false);
   const [showModelPickerModal, setShowModelPickerModal] = useState(false);
 
-  // Live Market State
+  // Live Market State (Binance Vision + Top-Down MTF)
   const [selectedTicker, setSelectedTicker] = useState('BTCUSDT');
-  const [tickerData, setTickerData] = useState<any>(null);
-  const [loadingTicker, setLoadingTicker] = useState(false);
+  const [topDownData, setTopDownData] = useState<TopDownMarketData | null>(null);
+  const [loadingTopDown, setLoadingTopDown] = useState(false);
 
   // Quotas
   const [loadingQuota, setLoadingQuota] = useState(false);
@@ -450,15 +633,15 @@ export default function Home() {
           const parsed: ChatSession[] = JSON.parse(savedSessions);
           if (parsed.length > 0) {
             setSessions(parsed);
-            const initialId = savedActiveId && parsed.some((s) => s.id === savedActiveId)
-              ? savedActiveId
-              : parsed[0].id;
+            const initialId =
+              savedActiveId && parsed.some((s) => s.id === savedActiveId)
+                ? savedActiveId
+                : parsed[0].id;
             setCurrentSessionId(initialId);
             return;
           }
         }
 
-        // Initialize first session
         const defaultSession: ChatSession = {
           id: `session_${Date.now()}`,
           title: 'Percakapan Baru',
@@ -470,7 +653,7 @@ export default function Home() {
               id: 'welcome',
               role: 'assistant',
               content:
-                'Halo! Saya **NOVA**, asisten AI otonom mutakhir. Saya siap membantu rekayasa kode, analisis penalaran, pemecahan masalah, atau analisis chart trading jika Anda mengaktifkan Mode Trading Neurobro di sidebar.',
+                'Halo! Saya **NOVA**, asisten AI otonom mutakhir. Saya siap membantu rekayasa kode, penalaran, atau analisa chart trading otomatis (Top-Down MTF) jika Anda mengaktifkan Mode Trading Neurobro di sidebar.',
               modelUsed: 'Claude Sonnet / GPT-6',
               timestamp: getFormattedTime()
             }
@@ -486,7 +669,6 @@ export default function Home() {
     })();
   }, []);
 
-  // Save Sessions whenever they change
   const saveSessionsToDisk = useCallback(async (updated: ChatSession[], activeId?: string) => {
     try {
       await AsyncStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(updated));
@@ -520,21 +702,21 @@ export default function Home() {
     fetchQuotas();
   }, []);
 
-  // 3. Fetch Live Ticker Data when Market Modal is open or ticker changes
-  const loadMarketTicker = async (symbol: string) => {
-    setLoadingTicker(true);
-    const data = await fetchBinanceTicker(symbol);
-    setTickerData(data);
-    setLoadingTicker(false);
+  // 3. Load Live Top-Down Market Data
+  const loadMarketData = async (symbol: string) => {
+    setLoadingTopDown(true);
+    const data = await fetchLiveTopDownData(symbol);
+    setTopDownData(data);
+    setLoadingTopDown(false);
   };
 
   useEffect(() => {
     if (showTradingViewModal) {
-      loadMarketTicker(selectedTicker);
+      loadMarketData(selectedTicker);
     }
   }, [showTradingViewModal, selectedTicker]);
 
-  // 4. Keyboard Auto-Scroll Setup (fixes Android / iOS occlusion)
+  // 4. Keyboard Auto-Scroll Setup
   useEffect(() => {
     const showSub = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
@@ -557,14 +739,14 @@ export default function Home() {
       title: 'Percakapan Baru',
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      mode: chatMode, // inherit current mode or default
+      mode: chatMode,
       messages: [
         {
           id: `welcome_${Date.now()}`,
           role: 'assistant',
           content:
             chatMode === 'trading'
-              ? '📈 **Mode Trading Neurobro Aktif.** Siap menganalisis chart pasar sesuai SOP baku: Top-Down MTF (H4 ➡️ M15 ➡️ M5), Konfluensi Struktur > Volume > Momentum, R:R minimal 1:2, dan Validasi Batas Batal. Silakan kirim screenshot chart atau tanyakan setup.'
+              ? '📈 **Mode Trading Neurobro Aktif.** Siap menganalisis chart pasar dengan SOP baku: Top-Down MTF (H4 ➡️ M15 ➡️ M5), Konfluensi Struktur > Volume > Momentum, R:R minimal 1:2, dan Validasi Batas Batal. Anda dapat mengetuk tombol "📊" untuk menarik data live chart & indikator secara otomatis atau kirim screenshot chart.'
               : 'Halo! Saya **NOVA**, asisten AI Anda. Apa yang ingin kita kerjakan hari ini? (Coding, riset, logika, atau tulisan)',
           modelUsed: 'Ready',
           timestamp: getFormattedTime()
@@ -613,7 +795,7 @@ export default function Home() {
     ]);
   };
 
-  // Toggle Mode for current session (General vs Neurobro Trading)
+  // Toggle Mode for current session
   const handleToggleMode = (newMode: 'general' | 'trading') => {
     Haptics.selectionAsync().catch(() => {});
     const updated = sessions.map((s) => {
@@ -626,11 +808,135 @@ export default function Home() {
     saveSessionsToDisk(updated);
   };
 
+  // Automated Top-Down MTF Analysis Trigger (MCP Mobile Feature)
+  const triggerAutomatedAnalysis = async (symbolToAnalyze: string) => {
+    setShowTradingViewModal(false);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+    // Ensure session is in trading mode
+    if (chatMode !== 'trading') {
+      handleToggleMode('trading');
+    }
+
+    setBusy(true);
+
+    const userMessage: UiMessage = {
+      id: `user_${Date.now()}`,
+      role: 'user',
+      content: `⚡ Analisis Otomatis Chart & Indikator ${symbolToAnalyze} (Top-Down MTF H4 ➡️ M15 ➡️ M5)`,
+      timestamp: getFormattedTime()
+    };
+
+    const currentMessages = activeSession ? [...activeSession.messages, userMessage] : [userMessage];
+    const sessionTitle = `Analisa ${symbolToAnalyze}`;
+
+    const updatedSessions = sessions.map((s) => {
+      if (s.id === currentSessionId) {
+        return {
+          ...s,
+          title: sessionTitle,
+          mode: 'trading' as const,
+          updatedAt: Date.now(),
+          messages: currentMessages
+        };
+      }
+      return s;
+    });
+    setSessions(updatedSessions);
+    saveSessionsToDisk(updatedSessions);
+
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+
+    try {
+      // 1. Fetch live multi-timeframe candle data & indicators
+      const liveData = await fetchLiveTopDownData(symbolToAnalyze);
+      if (!liveData) {
+        throw new Error(`Gagal menarik data live candlestick dari server bursa untuk ${symbolToAnalyze}.`);
+      }
+
+      // 2. Format exact prompt with factual MTF and indicator calculations
+      const factualPrompt = formatMarketDataPrompt(liveData);
+
+      // 3. Call OpenRouter with Neurobro trading directive
+      const result = await callOpenRouterDirectly(
+        currentMessages,
+        factualPrompt,
+        mode,
+        'trading',
+        null,
+        (failedIdx, nextIdx, reason) => {
+          setRateLimitedIndices((prev) => Array.from(new Set([...prev, failedIdx])));
+          setActiveKeyIndex(nextIdx);
+          setFailoverBanner(`Kunci #${failedIdx + 1} (${reason}) ➔ Beralih ke Kunci #${nextIdx + 1}`);
+          setTimeout(() => setFailoverBanner(null), 5000);
+        }
+      );
+
+      const assistantMessage: UiMessage = {
+        id: `assistant_${Date.now()}`,
+        role: 'assistant',
+        content: result.content,
+        modelUsed: result.model.split('/').pop() || result.model,
+        timestamp: getFormattedTime()
+      };
+
+      const finalMessages = [...currentMessages, assistantMessage];
+      const finalizedSessions = sessions.map((s) => {
+        if (s.id === currentSessionId) {
+          return {
+            ...s,
+            title: sessionTitle,
+            updatedAt: Date.now(),
+            messages: finalMessages
+          };
+        }
+        return s;
+      });
+
+      setSessions(finalizedSessions);
+      saveSessionsToDisk(finalizedSessions);
+    } catch (err: any) {
+      const errorMessage: UiMessage = {
+        id: `error_${Date.now()}`,
+        role: 'assistant',
+        content: `⚠️ Kendala eksekusi live data: ${err?.message || 'Gagal menghubungi server live data.'}. Silakan coba kembali.`,
+        modelUsed: 'Error',
+        timestamp: getFormattedTime()
+      };
+
+      const withError = [...currentMessages, errorMessage];
+      const withErrSessions = sessions.map((s) => {
+        if (s.id === currentSessionId) {
+          return { ...s, messages: withError };
+        }
+        return s;
+      });
+      setSessions(withErrSessions);
+      saveSessionsToDisk(withErrSessions);
+    } finally {
+      setBusy(false);
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  };
+
   // Send Message
   const send = async () => {
     const trimmed = input.trim();
     if (!trimmed && !attachment) return;
     if (busy) return;
+
+    // Check if user is asking to analyze a specific crypto symbol while in trading mode
+    const symbolMatch = trimmed.toUpperCase().match(/\b(BTC|ETH|SOL|BNB|XAU|EUR)(USDT)?\b/);
+    if (chatMode === 'trading' && symbolMatch && !attachment) {
+      const detectedSymbol = symbolMatch[1] === 'EUR' ? 'EURUSDT' : `${symbolMatch[1]}USDT`;
+      setInput('');
+      await triggerAutomatedAnalysis(detectedSymbol);
+      return;
+    }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setBusy(true);
@@ -650,7 +956,6 @@ export default function Home() {
         ? (trimmed || (attachment ? 'Analisis Media' : 'Obrolan')).slice(0, 30)
         : activeSession?.title || 'Obrolan';
 
-    // Update active session locally
     const updatedSessions = sessions.map((s) => {
       if (s.id === currentSessionId) {
         return {
@@ -850,13 +1155,21 @@ export default function Home() {
 
       {/* Failover Floating Banner */}
       {failoverBanner && (
-        <View style={[styles.failoverToast, { top: insets.top + 50 }]}>
+        <View style={[styles.failoverToast, { top: insets.top + (isLandscape ? 38 : 50) }]}>
           <Text style={styles.failoverToastText}>{failoverBanner}</Text>
         </View>
       )}
 
       {/* App Header */}
-      <View style={[styles.header, { paddingTop: Math.max(insets.top + 8, 12) }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            paddingTop: Math.max(insets.top + (isLandscape ? 4 : 8), 10),
+            paddingHorizontal: isLandscape ? 24 : 14
+          }
+        ]}
+      >
         <View style={styles.headerLeft}>
           <Pressable
             onPress={() => {
@@ -869,7 +1182,14 @@ export default function Home() {
           </Pressable>
 
           <View style={styles.brandTitleCol}>
-            <Text style={styles.brandTitle}>NOVA</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.brandTitle}>NOVA</Text>
+              {isLandscape && (
+                <View style={styles.landscapePill}>
+                  <Text style={styles.landscapePillText}>16:9 WIDE</Text>
+                </View>
+              )}
+            </View>
             <Pressable
               onPress={() => handleToggleMode(chatMode === 'general' ? 'trading' : 'general')}
               style={[
@@ -918,7 +1238,13 @@ export default function Home() {
       <ScrollView
         ref={scrollViewRef}
         style={styles.chatScroll}
-        contentContainerStyle={[styles.chatContent, { paddingBottom: 24 }]}
+        contentContainerStyle={[
+          styles.chatContent,
+          {
+            paddingHorizontal: isLandscape ? 24 : 14,
+            paddingBottom: 24
+          }
+        ]}
         keyboardShouldPersistTaps="handled"
       >
         {messages.map((m) => (
@@ -935,10 +1261,10 @@ export default function Home() {
             <View
               style={[
                 styles.messageBubble,
-                m.role === 'user' ? styles.userBubble : styles.assistantBubble
+                m.role === 'user' ? styles.userBubble : styles.assistantBubble,
+                isLandscape && { maxWidth: '75%' }
               ]}
             >
-              {/* Message Header info */}
               <View style={styles.bubbleHeaderRow}>
                 <Text style={styles.bubbleRoleText}>
                   {m.role === 'user' ? 'Anda' : `NOVA (${m.modelUsed || 'AI'})`}
@@ -946,7 +1272,6 @@ export default function Home() {
                 <Text style={styles.bubbleTimeText}>{m.timestamp}</Text>
               </View>
 
-              {/* Attached media display */}
               {m.imageUri && (
                 <Pressable
                   onPress={() => setPreviewImageUri(m.imageUri || null)}
@@ -961,7 +1286,6 @@ export default function Home() {
                 </Pressable>
               )}
 
-              {/* Content text */}
               <Text
                 style={[
                   styles.messageText,
@@ -972,7 +1296,6 @@ export default function Home() {
                 {m.content}
               </Text>
 
-              {/* Action buttons for assistant messages */}
               {m.role === 'assistant' && (
                 <View style={styles.bubbleActionRow}>
                   <Pressable
@@ -1003,13 +1326,13 @@ export default function Home() {
         ))}
 
         {busy && (
-          <View style={styles.thinkingRow}>
+          <View style={[styles.thinkingRow, isLandscape && { paddingHorizontal: 12 }]}>
             <View style={styles.assistantAvatar}>
               <Text style={styles.assistantAvatarText}>✦</Text>
             </View>
             <View style={styles.thinkingBubble}>
               <ActivityIndicator color="#818CF8" size="small" />
-              <Text style={styles.thinkingText}>NOVA sedang menganalisis…</Text>
+              <Text style={styles.thinkingText}>NOVA sedang menganalisis chart & pasar…</Text>
             </View>
           </View>
         )}
@@ -1020,7 +1343,6 @@ export default function Home() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom + 8 : 0}
       >
-        {/* Attachment preview capsule */}
         {attachment && (
           <View style={styles.attachmentPreviewBar}>
             <Image source={{ uri: attachment.uri }} style={styles.attachmentThumb} />
@@ -1046,9 +1368,15 @@ export default function Home() {
           </View>
         )}
 
-        {/* Input Bar */}
-        <View style={[styles.composerBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          {/* Media Attach Button */}
+        <View
+          style={[
+            styles.composerBar,
+            {
+              paddingBottom: Math.max(insets.bottom, 8),
+              paddingHorizontal: isLandscape ? 24 : 10
+            }
+          ]}
+        >
           <Pressable
             onPress={() => {
               Haptics.selectionAsync().catch(() => {});
@@ -1059,7 +1387,6 @@ export default function Home() {
             <Text style={styles.composerIconText}>📷</Text>
           </Pressable>
 
-          {/* Voice Mic Button */}
           <Pressable
             onPress={handleMicPress}
             style={[
@@ -1070,7 +1397,6 @@ export default function Home() {
             <Text style={styles.composerIconText}>🎤</Text>
           </Pressable>
 
-          {/* Text Input */}
           <TextInput
             value={input}
             onChangeText={setInput}
@@ -1079,7 +1405,7 @@ export default function Home() {
             }}
             placeholder={
               chatMode === 'trading'
-                ? 'Tanya chart, setup MTF, atau ketik simbol…'
+                ? 'Ketik "Analisa BTC" atau simbol lain…'
                 : 'Ketik pesan untuk NOVA…'
             }
             placeholderTextColor="#64748B"
@@ -1087,7 +1413,6 @@ export default function Home() {
             style={styles.textInput}
           />
 
-          {/* Send Button */}
           <Pressable
             onPress={send}
             disabled={busy || (!input.trim() && !attachment)}
@@ -1115,18 +1440,18 @@ export default function Home() {
         onRequestClose={() => setShowSidebar(false)}
       >
         <View style={styles.sidebarBackdrop}>
-          <Pressable
-            style={styles.sidebarOutsideOverlay}
-            onPress={() => setShowSidebar(false)}
-          />
+          <Pressable style={styles.sidebarOutsideOverlay} onPress={() => setShowSidebar(false)} />
 
           <View
             style={[
               styles.sidebarContent,
-              { paddingTop: Math.max(insets.top + 10, 16), paddingBottom: Math.max(insets.bottom + 10, 16) }
+              {
+                width: isLandscape ? 340 : Math.min(SCREEN_WIDTH * 0.82, 320),
+                paddingTop: Math.max(insets.top + 10, 16),
+                paddingBottom: Math.max(insets.bottom + 10, 16)
+              }
             ]}
           >
-            {/* Sidebar Brand & Close */}
             <View style={styles.sidebarHeader}>
               <View style={styles.sidebarBrandRow}>
                 <View style={styles.sidebarLogoEmblem}>
@@ -1134,21 +1459,16 @@ export default function Home() {
                 </View>
                 <Text style={styles.sidebarBrandTitle}>NOVA AGENT</Text>
               </View>
-              <Pressable
-                onPress={() => setShowSidebar(false)}
-                style={styles.sidebarCloseButton}
-              >
+              <Pressable onPress={() => setShowSidebar(false)} style={styles.sidebarCloseButton}>
                 <Text style={styles.sidebarCloseText}>✕</Text>
               </Pressable>
             </View>
 
-            {/* New Chat Action */}
             <Pressable onPress={handleNewChat} style={styles.sidebarNewChatBtn}>
               <Text style={styles.sidebarNewChatIcon}>+</Text>
               <Text style={styles.sidebarNewChatText}>Obrolan Baru</Text>
             </Pressable>
 
-            {/* Mode Switcher Block */}
             <View style={styles.sidebarSectionBox}>
               <Text style={styles.sidebarSectionLabel}>MODE ASISTEN</Text>
               <View style={styles.sidebarModeSwitcher}>
@@ -1190,11 +1510,20 @@ export default function Home() {
               </View>
             </View>
 
-            {/* Quick Tools Navigation */}
             <View style={styles.sidebarSectionBox}>
-              <Text style={styles.sidebarSectionLabel}>ALAT & PEDOMAN</Text>
+              <Text style={styles.sidebarSectionLabel}>ALAT & ANALISIS OTOMATIS</Text>
 
-              {/* Pedoman Trading SOP */}
+              <Pressable
+                onPress={() => {
+                  setShowSidebar(false);
+                  setShowTradingViewModal(true);
+                }}
+                style={styles.sidebarNavRow}
+              >
+                <Text style={styles.sidebarNavIcon}>📊</Text>
+                <Text style={styles.sidebarNavTitle}>Live Chart & Auto-Analysis (16:9)</Text>
+              </Pressable>
+
               <Pressable
                 onPress={() => {
                   setShowSidebar(false);
@@ -1206,19 +1535,6 @@ export default function Home() {
                 <Text style={styles.sidebarNavTitle}>Pedoman Trading (SOP)</Text>
               </Pressable>
 
-              {/* Live TradingView Chart */}
-              <Pressable
-                onPress={() => {
-                  setShowSidebar(false);
-                  setShowTradingViewModal(true);
-                }}
-                style={styles.sidebarNavRow}
-              >
-                <Text style={styles.sidebarNavIcon}>📊</Text>
-                <Text style={styles.sidebarNavTitle}>Live TradingView & Market</Text>
-              </Pressable>
-
-              {/* Monitor Kuota */}
               <Pressable
                 onPress={() => {
                   setShowSidebar(false);
@@ -1227,10 +1543,9 @@ export default function Home() {
                 style={styles.sidebarNavRow}
               >
                 <Text style={styles.sidebarNavIcon}>⚡</Text>
-                <Text style={styles.sidebarNavTitle}>Status Kuota API</Text>
+                <Text style={styles.sidebarNavTitle}>Status Kuota API Riil</Text>
               </Pressable>
 
-              {/* Model AI Preset */}
               <Pressable
                 onPress={() => {
                   setShowSidebar(false);
@@ -1243,7 +1558,6 @@ export default function Home() {
               </Pressable>
             </View>
 
-            {/* Chat History List */}
             <View style={styles.sidebarHistoryContainer}>
               <Text style={styles.sidebarSectionLabel}>RIWAYAT OBROLAN</Text>
               <ScrollView showsVerticalScrollIndicator={false} style={styles.sidebarHistoryScroll}>
@@ -1272,9 +1586,7 @@ export default function Home() {
                             {s.title}
                           </Text>
                         </View>
-                        <Text style={styles.historyItemCount}>
-                          {s.messages.length} pesan
-                        </Text>
+                        <Text style={styles.historyItemCount}>{s.messages.length} pesan</Text>
                       </Pressable>
 
                       <Pressable
@@ -1289,11 +1601,10 @@ export default function Home() {
               </ScrollView>
             </View>
 
-            {/* Sidebar Footer */}
             <View style={styles.sidebarFooter}>
               <View style={styles.sidebarStatusDot} />
               <Text style={styles.sidebarFooterText}>
-                4 Kunci API Terhubung · Failover Aktif
+                Live MCP Engine · Auto Top-Down Active
               </Text>
             </View>
           </View>
@@ -1301,107 +1612,7 @@ export default function Home() {
       </Modal>
 
       {/* ==================================================================== */}
-      {/* PEDOMAN TRADING NEUROBRO MODAL (Full SOP from AI YM_Trading)         */}
-      {/* ==================================================================== */}
-      <Modal
-        visible={showTradingSopModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowTradingSopModal(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.sopModalContainer, { paddingBottom: Math.max(insets.bottom + 10, 20) }]}>
-            <View style={styles.modalHeaderRow}>
-              <View>
-                <Text style={styles.modalHeaderTitle}>Pedoman & Aturan Trading</Text>
-                <Text style={styles.modalHeaderSubtitle}>Metodologi Baku Neurobro & Antigravity</Text>
-              </View>
-              <Pressable
-                onPress={() => setShowTradingSopModal(false)}
-                style={styles.modalCloseButton}
-              >
-                <Text style={styles.modalCloseText}>✕</Text>
-              </Pressable>
-            </View>
-
-            <ScrollView style={styles.sopScrollView} showsVerticalScrollIndicator={false}>
-              {/* Card 1: Filosofi */}
-              <View style={styles.sopCard}>
-                <Text style={styles.sopCardHeading}>🧠 Pelajaran 1: Filosofi AI Trading</Text>
-                <Text style={styles.sopCardText}>
-                  • <Text style={styles.sopHighlight}>No Hallucination:</Text> Wajib konfirmasi data chart live. Jika data tidak terlihat, katakan "Tidak tahu".{'\n'}
-                  • <Text style={styles.sopHighlight}>Pisahkan Kalkulasi dari Interpretasi:</Text> Fokus membaca aksi harga dan indikator faktual yang terlihat.
-                </Text>
-              </View>
-
-              {/* Card 2: Hirarki Konfluensi */}
-              <View style={styles.sopCard}>
-                <Text style={styles.sopCardHeading}>🔥 Pelajaran 2: Rahasia Dapur Eksekusi</Text>
-                <Text style={styles.sopCardText}>
-                  • <Text style={styles.sopHighlight}>Hirarki Juara:</Text> Struktur {'>'} Volume {'>'} Momentum. Momentum tanpa konfirmasi Struktur mutlak di-SKIP.{'\n'}
-                  • <Text style={styles.sopHighlight}>Long/Short Ratio:</Text> Rasio ekstrem adalah filter skeptis tambahan, BUKAN pemicu open posisi.{'\n'}
-                  • <Text style={styles.sopHighlight}>Breakout vs Fakeout:</Text> Tembus hanya dengan wick adalah Liquidity Grab. Wajib tunggu candle close dan retest volume.
-                </Text>
-              </View>
-
-              {/* Card 3: Indikator Baku */}
-              <View style={styles.sopCard}>
-                <Text style={styles.sopCardHeading}>⚙️ Pelajaran 3: Parameter Indikator Baku</Text>
-                <Text style={styles.sopCardText}>
-                  • <Text style={styles.sopHighlight}>MACD:</Text> 12 / 26 / 9 (EMA Close) — Wajib candle close.{'\n'}
-                  • <Text style={styles.sopHighlight}>RSI:</Text> Length 14 — Dilarang short membabi buta hanya karena RSI {'>'} 70.{'\n'}
-                  • <Text style={styles.sopHighlight}>Volume:</Text> MA 20 — Konfirmasi breakout terhadap rata-rata 20 candle.
-                </Text>
-              </View>
-
-              {/* Card 4: Multi-Timeframe */}
-              <View style={styles.sopCard}>
-                <Text style={styles.sopCardHeading}>⏱️ Pelajaran 4: Multi-Timeframe (Top-Down)</Text>
-                <Text style={styles.sopCardText}>
-                  • <Text style={styles.sopHighlight}>H4 (Bias Utama):</Text> Tren makro, S/R mayor, Swing High/Low.{'\n'}
-                  • <Text style={styles.sopHighlight}>M15 (Setup):</Text> Area pullback, penembusan, pengujian ulang.{'\n'}
-                  • <Text style={styles.sopHighlight}>M5 (Eksekusi):</Text> Validasi struktur kecil & volume.{'\n'}
-                  • <Text style={styles.sopHighlight}>M1:</Text> Diabaikan karena terlalu berisik (noise).
-                </Text>
-              </View>
-
-              {/* Card 5: Kritik Eksekusi */}
-              <View style={styles.sopCard}>
-                <Text style={styles.sopCardHeading}>🛡️ Pelajaran 5: Kritik & Validasi Neurobro</Text>
-                <Text style={styles.sopCardText}>
-                  • <Text style={styles.sopHighlight}>Matematika R:R:</Text> Minimal 1:2 mutlak. Dilarang memberikan entry dengan rasio di bawah 1:2.{'\n'}
-                  • <Text style={styles.sopHighlight}>Fakta vs Narasi:</Text> Dilarang narasi "smart money menjebak ritel". Chart hanya menampilkan reaksi harga mekanis.{'\n'}
-                  • <Text style={styles.sopHighlight}>Batas Batal (Invalidasi Close):</Text> Setiap setup wajib memiliki satu harga acuan di mana jika candle close menembus angka tersebut, eksekusi dibatalkan.
-                </Text>
-              </View>
-
-              {/* Card 6: Cuaca BTC */}
-              <View style={styles.sopCard}>
-                <Text style={styles.sopCardHeading}>🔗 Pelajaran 6: Korelasi Pasar (Cuaca BTC)</Text>
-                <Text style={styles.sopCardText}>
-                  • Bitcoin adalah indeks utama pasar. Algoritma bot mengikat seluruh altcoin ke pergerakan BTC.{'\n'}
-                  • <Text style={styles.sopHighlight}>DILARANG KERAS</Text> mengambil setup Long di Altcoin jika BTC sedang breakdown/dump agresif!
-                </Text>
-              </View>
-
-              {/* Quick Action Button */}
-              <Pressable
-                onPress={() => {
-                  handleToggleMode('trading');
-                  setShowTradingSopModal(false);
-                  Alert.alert('Mode Trading Aktif', 'Obrolan ini sekarang mengikuti seluruh aturan baku Neurobro.');
-                }}
-                style={styles.sopApplyButton}
-              >
-                <Text style={styles.sopApplyText}>⚡ Terapkan Mode Trading Neurobro untuk Sesi Ini</Text>
-              </Pressable>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ==================================================================== */}
-      {/* LIVE TRADINGVIEW & MARKET DATA MODAL                                 */}
+      {/* LIVE TRADINGVIEW & AUTO-MARKET DATA MODAL (16:9 Widescreen Aware)    */}
       {/* ==================================================================== */}
       <Modal
         visible={showTradingViewModal}
@@ -1410,11 +1621,28 @@ export default function Home() {
         onRequestClose={() => setShowTradingViewModal(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[styles.tvModalContainer, { paddingBottom: Math.max(insets.bottom + 10, 20) }]}>
+          <View
+            style={[
+              styles.tvModalContainer,
+              isLandscape && styles.tvModalContainerLandscape,
+              { paddingBottom: Math.max(insets.bottom + 10, 16) }
+            ]}
+          >
             <View style={styles.modalHeaderRow}>
               <View>
-                <Text style={styles.modalHeaderTitle}>Live Market & TradingView</Text>
-                <Text style={styles.modalHeaderSubtitle}>Data pasar riil Binance & Integrasi Chart</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.modalHeaderTitle}>Live Chart & Indikator Otomatis</Text>
+                  <View style={styles.orientationBadge}>
+                    <Text style={styles.orientationBadgeText}>
+                      {isLandscape ? '16:9 Widescreen' : '9:16 Tegak'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.modalHeaderSubtitle}>
+                  {isLandscape
+                    ? 'Mode Widescreen aktif — Tampilan luas multi-timeframe & indikator'
+                    : 'Miringkan HP ke posisi horizontal untuk tampilan 16:9 sinematik'}
+                </Text>
               </View>
               <Pressable
                 onPress={() => setShowTradingViewModal(false)}
@@ -1445,81 +1673,267 @@ export default function Home() {
               })}
             </ScrollView>
 
-            {/* Live Ticker Card */}
-            <View style={styles.tvTickerCard}>
-              {loadingTicker ? (
-                <ActivityIndicator color="#818CF8" size="large" style={{ padding: 24 }} />
-              ) : tickerData ? (
-                <View>
-                  <View style={styles.tvTickerHeaderRow}>
-                    <Text style={styles.tvTickerSymbol}>{tickerData.symbol}</Text>
-                    <View
-                      style={[
-                        styles.tvChangeBadge,
-                        parseFloat(tickerData.priceChangePercent) >= 0
-                          ? styles.tvChangeBadgeGreen
-                          : styles.tvChangeBadgeRed
-                      ]}
-                    >
-                      <Text style={styles.tvChangeText}>
-                        {parseFloat(tickerData.priceChangePercent) >= 0 ? '+' : ''}
-                        {parseFloat(tickerData.priceChangePercent).toFixed(2)}%
+            {/* Main Content Area (Flexible for 9:16 and 16:9 Landscape) */}
+            <ScrollView showsVerticalScrollIndicator={false} style={styles.tvScrollArea}>
+              <View style={[styles.tvLayoutRow, isLandscape && styles.tvLayoutRowLandscape]}>
+                {/* Left/Top Card: Live Ticker & Price */}
+                <View style={[styles.tvTickerCard, isLandscape && styles.tvTickerCardLandscape]}>
+                  {loadingTopDown ? (
+                    <ActivityIndicator color="#818CF8" size="large" style={{ padding: 24 }} />
+                  ) : topDownData ? (
+                    <View>
+                      <View style={styles.tvTickerHeaderRow}>
+                        <Text style={styles.tvTickerSymbol}>{topDownData.symbol}</Text>
+                        <View
+                          style={[
+                            styles.tvChangeBadge,
+                            topDownData.change24h >= 0
+                              ? styles.tvChangeBadgeGreen
+                              : styles.tvChangeBadgeRed
+                          ]}
+                        >
+                          <Text style={styles.tvChangeText}>
+                            {topDownData.change24h >= 0 ? '+' : ''}
+                            {topDownData.change24h.toFixed(2)}%
+                          </Text>
+                        </View>
+                      </View>
+
+                      <Text style={styles.tvPriceBig}>
+                        ${topDownData.price.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </Text>
-                    </View>
-                  </View>
 
-                  <Text style={styles.tvPriceBig}>
-                    ${parseFloat(tickerData.lastPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                  </Text>
-
-                  <View style={styles.tvStatsGrid}>
-                    <View style={styles.tvStatItem}>
-                      <Text style={styles.tvStatLabel}>24h High</Text>
-                      <Text style={styles.tvStatVal}>${parseFloat(tickerData.highPrice).toFixed(2)}</Text>
+                      <View style={styles.tvStatsGrid}>
+                        <View style={styles.tvStatItem}>
+                          <Text style={styles.tvStatLabel}>24h High</Text>
+                          <Text style={styles.tvStatVal}>${topDownData.high24h.toFixed(2)}</Text>
+                        </View>
+                        <View style={styles.tvStatItem}>
+                          <Text style={styles.tvStatLabel}>24h Low</Text>
+                          <Text style={styles.tvStatVal}>${topDownData.low24h.toFixed(2)}</Text>
+                        </View>
+                        <View style={styles.tvStatItem}>
+                          <Text style={styles.tvStatLabel}>24h Volume</Text>
+                          <Text style={styles.tvStatVal}>{topDownData.volume24h.toFixed(1)}</Text>
+                        </View>
+                      </View>
                     </View>
-                    <View style={styles.tvStatItem}>
-                      <Text style={styles.tvStatLabel}>24h Low</Text>
-                      <Text style={styles.tvStatVal}>${parseFloat(tickerData.lowPrice).toFixed(2)}</Text>
-                    </View>
-                    <View style={styles.tvStatItem}>
-                      <Text style={styles.tvStatLabel}>24h Volume</Text>
-                      <Text style={styles.tvStatVal}>{parseFloat(tickerData.volume).toFixed(1)}</Text>
-                    </View>
-                  </View>
+                  ) : (
+                    <Text style={styles.tvNoDataText}>Memuat data live pasar...</Text>
+                  )}
                 </View>
-              ) : (
-                <Text style={styles.tvNoDataText}>Data ticker belum tersedia atau koneksi timeout.</Text>
-              )}
-            </View>
 
-            {/* Open in TradingView Official */}
-            <Pressable
-              onPress={() => {
-                const chartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${selectedTicker}`;
-                Linking.openURL(chartUrl).catch(() => {
-                  Alert.alert('Gagal Membuka', 'Tidak dapat membuka browser.');
-                });
-              }}
-              style={styles.tvOpenExternalButton}
-            >
-              <Text style={styles.tvOpenExternalText}>
-                🌐 Buka Chart Interaktif {selectedTicker} di TradingView
-              </Text>
-            </Pressable>
+                {/* Right/Bottom Card: Multi-Timeframe Matrix (H4, M15, M5 Indicators) */}
+                {topDownData && (
+                  <View style={[styles.mtfMatrixCard, isLandscape && styles.mtfMatrixCardLandscape]}>
+                    <Text style={styles.mtfMatrixTitle}>📊 Indikator Live Terhitung (Real-Time)</Text>
+                    <View style={styles.mtfGrid}>
+                      <View style={styles.mtfColumn}>
+                        <Text style={styles.mtfColHeader}>H4 BIAS</Text>
+                        <Text
+                          style={[
+                            styles.mtfColVal,
+                            topDownData.h4.trend === 'BULLISH'
+                              ? styles.mtfTrendBull
+                              : styles.mtfTrendBear
+                          ]}
+                        >
+                          {topDownData.h4.trend}
+                        </Text>
+                        <Text style={styles.mtfSubVal}>
+                          Close: ${topDownData.h4.lastClose.toFixed(1)}
+                        </Text>
+                      </View>
 
-            {/* Desktop MCP vs Mobile Explanation */}
-            <View style={styles.tvNoticeBox}>
-              <Text style={styles.tvNoticeTitle}>💡 Analisa Trading dengan NOVA</Text>
-              <Text style={styles.tvNoticeText}>
-                Anda dapat mengambil screenshot dari TradingView lalu lampirkan ke NOVA (ikon kamera). NOVA akan langsung membedah struktur pasar H4-M15-M5, Order Block, dan menghitung titik R:R sesuai aturan Neurobro.
-              </Text>
-            </View>
+                      <View style={styles.mtfColumn}>
+                        <Text style={styles.mtfColHeader}>M15 SETUP</Text>
+                        <Text style={styles.mtfColVal}>RSI {topDownData.m15.rsi14}</Text>
+                        <Text style={styles.mtfSubVal}>Vol {topDownData.m15.volumeRatio}x MA</Text>
+                      </View>
+
+                      <View style={styles.mtfColumn}>
+                        <Text style={styles.mtfColHeader}>M5 EKSEKUSI</Text>
+                        <Text
+                          style={[
+                            styles.mtfColVal,
+                            topDownData.m5.candleType === 'BULLISH_CLOSE'
+                              ? styles.mtfTrendBull
+                              : styles.mtfTrendBear
+                          ]}
+                        >
+                          {topDownData.m5.candleType.replace('_CLOSE', '')}
+                        </Text>
+                        <Text style={styles.mtfSubVal}>RSI {topDownData.m5.rsi14}</Text>
+                      </View>
+                    </View>
+
+                    {topDownData.btcWeather && (
+                      <View style={styles.btcWeatherBar}>
+                        <Text style={styles.btcWeatherLabel}>Cuaca BTC Indeks:</Text>
+                        <Text
+                          style={[
+                            styles.btcWeatherVal,
+                            topDownData.btcWeather.status === 'DUMP_ALERT'
+                              ? styles.weatherDump
+                              : styles.weatherOk
+                          ]}
+                        >
+                          ${topDownData.btcWeather.price.toFixed(0)} (
+                          {topDownData.btcWeather.change24h > 0 ? '+' : ''}
+                          {topDownData.btcWeather.change24h.toFixed(2)}%) ·{' '}
+                          {topDownData.btcWeather.status === 'DUMP_ALERT'
+                            ? 'DUMP TAJAM (Hati-hati Long)'
+                            : 'Normal'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              {/* ACTION: Auto-Analyze Live Chart Button (MCP Tooling) */}
+              <Pressable
+                onPress={() => triggerAutomatedAnalysis(selectedTicker)}
+                style={styles.autoAnalyzeBtn}
+              >
+                <Text style={styles.autoAnalyzeBtnIcon}>⚡</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.autoAnalyzeBtnTitle}>
+                    Analisis Otomatis {selectedTicker} dengan Neurobro
+                  </Text>
+                  <Text style={styles.autoAnalyzeBtnSub}>
+                    NOVA membaca candlestick H4/M15/M5 & indikator live lalu membuat rencana trading R:R ≥ 1:2
+                  </Text>
+                </View>
+              </Pressable>
+
+              {/* ACTION: Open TradingView Interactive Chart */}
+              <Pressable
+                onPress={() => {
+                  const chartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${selectedTicker}`;
+                  Linking.openURL(chartUrl).catch(() => {
+                    Alert.alert('Gagal Membuka', 'Tidak dapat membuka browser.');
+                  });
+                }}
+                style={styles.tvOpenExternalButton}
+              >
+                <Text style={styles.tvOpenExternalText}>
+                  🌐 Buka Chart Interaktif {selectedTicker} di TradingView.com
+                </Text>
+              </Pressable>
+
+              <View style={styles.tvNoticeBox}>
+                <Text style={styles.tvNoticeTitle}>💡 Analisa Otomatis Tanpa Halusinasi</Text>
+                <Text style={styles.tvNoticeText}>
+                  Seperti fungsi tool MCP TradingView di Antigravity, mesin ini otomatis menarik candlestick live bursa, menghitung RSI 14, Volume MA 20, dan mengecek cuaca BTC secara mekanis tanpa rekayasa data.
+                </Text>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
 
       {/* ==================================================================== */}
-      {/* FACTUAL OPENROUTER QUOTA MODAL (Zero Fake Rings)                     */}
+      {/* PEDOMAN TRADING NEUROBRO MODAL                                       */}
+      {/* ==================================================================== */}
+      <Modal
+        visible={showTradingSopModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTradingSopModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View
+            style={[
+              styles.sopModalContainer,
+              isLandscape && styles.sopModalContainerLandscape,
+              { paddingBottom: Math.max(insets.bottom + 10, 20) }
+            ]}
+          >
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>Pedoman & Aturan Trading</Text>
+                <Text style={styles.modalHeaderSubtitle}>Metodologi Baku Neurobro & Antigravity</Text>
+              </View>
+              <Pressable
+                onPress={() => setShowTradingSopModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.sopScrollView} showsVerticalScrollIndicator={false}>
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>🧠 Pelajaran 1: Filosofi AI Trading</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>No Hallucination:</Text> Wajib konfirmasi data chart live. Jika data tidak terlihat, katakan "Tidak tahu".{'\n'}
+                  • <Text style={styles.sopHighlight}>Pisahkan Kalkulasi dari Interpretasi:</Text> Fokus membaca aksi harga dan indikator faktual yang terlihat.
+                </Text>
+              </View>
+
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>🔥 Pelajaran 2: Rahasia Dapur Eksekusi</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>Hirarki Juara:</Text> Struktur {'>'} Volume {'>'} Momentum. Momentum tanpa konfirmasi Struktur mutlak di-SKIP.{'\n'}
+                  • <Text style={styles.sopHighlight}>Long/Short Ratio:</Text> Rasio ekstrem adalah filter skeptis tambahan, BUKAN pemicu open posisi.{'\n'}
+                  • <Text style={styles.sopHighlight}>Breakout vs Fakeout:</Text> Tembus hanya dengan wick adalah Liquidity Grab. Wajib tunggu candle close dan retest volume.
+                </Text>
+              </View>
+
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>⚙️ Pelajaran 3: Parameter Indikator Baku</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>MACD:</Text> 12 / 26 / 9 (EMA Close) — Wajib candle close.{'\n'}
+                  • <Text style={styles.sopHighlight}>RSI:</Text> Length 14 — Dilarang short membabi buta hanya karena RSI {'>'} 70.{'\n'}
+                  • <Text style={styles.sopHighlight}>Volume:</Text> MA 20 — Konfirmasi breakout terhadap rata-rata 20 candle.
+                </Text>
+              </View>
+
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>⏱️ Pelajaran 4: Multi-Timeframe (Top-Down)</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>H4 (Bias Utama):</Text> Tren makro, S/R mayor, Swing High/Low.{'\n'}
+                  • <Text style={styles.sopHighlight}>M15 (Setup):</Text> Area pullback, penembusan, pengujian ulang.{'\n'}
+                  • <Text style={styles.sopHighlight}>M5 (Eksekusi):</Text> Validasi struktur kecil & volume.{'\n'}
+                  • <Text style={styles.sopHighlight}>M1:</Text> Diabaikan karena terlalu berisik (noise).
+                </Text>
+              </View>
+
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>🛡️ Pelajaran 5: Kritik & Validasi Neurobro</Text>
+                <Text style={styles.sopCardText}>
+                  • <Text style={styles.sopHighlight}>Matematika R:R:</Text> Minimal 1:2 mutlak. Dilarang memberikan entry dengan rasio di bawah 1:2.{'\n'}
+                  • <Text style={styles.sopHighlight}>Fakta vs Narasi:</Text> Dilarang narasi spekulatif. Chart hanya menampilkan reaksi harga mekanis.{'\n'}
+                  • <Text style={styles.sopHighlight}>Batas Batal (Invalidasi Close):</Text> Setiap setup wajib memiliki satu harga acuan di mana jika candle close menembus angka tersebut, eksekusi dibatalkan.
+                </Text>
+              </View>
+
+              <View style={styles.sopCard}>
+                <Text style={styles.sopCardHeading}>🔗 Pelajaran 6: Korelasi Pasar (Cuaca BTC)</Text>
+                <Text style={styles.sopCardText}>
+                  • Bitcoin adalah indeks utama pasar. Algoritma bot mengikat seluruh altcoin ke pergerakan BTC.{'\n'}
+                  • <Text style={styles.sopHighlight}>DILARANG KERAS</Text> mengambil setup Long di Altcoin jika BTC sedang breakdown/dump agresif!
+                </Text>
+              </View>
+
+              <Pressable
+                onPress={() => {
+                  handleToggleMode('trading');
+                  setShowTradingSopModal(false);
+                  Alert.alert('Mode Trading Aktif', 'Obrolan ini sekarang mengikuti seluruh aturan baku Neurobro.');
+                }}
+                style={styles.sopApplyButton}
+              >
+                <Text style={styles.sopApplyText}>⚡ Terapkan Mode Trading Neurobro untuk Sesi Ini</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ==================================================================== */}
+      {/* FACTUAL OPENROUTER QUOTA MODAL                                       */}
       {/* ==================================================================== */}
       <Modal
         visible={showQuotaModal}
@@ -1528,27 +1942,29 @@ export default function Home() {
         onRequestClose={() => setShowQuotaModal(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[styles.quotaModalContainer, { paddingBottom: Math.max(insets.bottom + 10, 20) }]}>
+          <View
+            style={[
+              styles.quotaModalContainer,
+              isLandscape && styles.quotaModalContainerLandscape,
+              { paddingBottom: Math.max(insets.bottom + 10, 20) }
+            ]}
+          >
             <View style={styles.modalHeaderRow}>
               <View>
                 <Text style={styles.modalHeaderTitle}>Status Kunci & Limit API</Text>
                 <Text style={styles.modalHeaderSubtitle}>Data riil langsung dari server OpenRouter</Text>
               </View>
-              <Pressable
-                onPress={() => setShowQuotaModal(false)}
-                style={styles.modalCloseButton}
-              >
+              <Pressable onPress={() => setShowQuotaModal(false)} style={styles.modalCloseButton}>
                 <Text style={styles.modalCloseText}>✕</Text>
               </Pressable>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} style={styles.quotaScrollArea}>
-              {/* Failover Switch Card */}
               <View style={styles.quotaSettingCard}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={styles.quotaSettingTitle}>Failover Multi-Key Otomatis</Text>
                   <Text style={styles.quotaSettingSubtitle}>
-                    Jika satu kunci terkena pembatasan frekuensi (Rate Limit 429), permintaan otomatis dialihkan ke kunci berikutnya.
+                    Jika satu kunci terkena pembatasan antrean (Rate Limit 429), permintaan otomatis dialihkan ke kunci berikutnya.
                   </Text>
                 </View>
                 <Switch
@@ -1562,7 +1978,6 @@ export default function Home() {
                 />
               </View>
 
-              {/* Factual Transparency Box */}
               <View style={styles.quotaInfoBox}>
                 <Text style={styles.quotaInfoTitle}>ℹ️ Fakta Limit OpenRouter</Text>
                 <Text style={styles.quotaInfoBody}>
@@ -1570,7 +1985,6 @@ export default function Home() {
                 </Text>
               </View>
 
-              {/* List of 4 API Keys */}
               <Text style={styles.quotaSectionTitle}>
                 4 KUNCI API TERDAFTAR {lastCheckTime ? `(${lastCheckTime})` : ''}
               </Text>
@@ -1659,9 +2073,7 @@ export default function Home() {
         </View>
       </Modal>
 
-      {/* ==================================================================== */}
-      {/* MODEL PICKER MODAL                                                   */}
-      {/* ==================================================================== */}
+      {/* Model Picker Modal */}
       <Modal
         visible={showModelPickerModal}
         transparent
@@ -1669,7 +2081,13 @@ export default function Home() {
         onRequestClose={() => setShowModelPickerModal(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[styles.modelPickerSheet, { paddingBottom: Math.max(insets.bottom + 10, 20) }]}>
+          <View
+            style={[
+              styles.modelPickerSheet,
+              isLandscape && { maxWidth: 500, alignSelf: 'center', width: '90%' },
+              { paddingBottom: Math.max(insets.bottom + 10, 20) }
+            ]}
+          >
             <View style={styles.modalHeaderRow}>
               <View>
                 <Text style={styles.modalHeaderTitle}>Pilih Preset Model AI</Text>
@@ -1755,10 +2173,7 @@ export default function Home() {
               </Pressable>
             </View>
 
-            <Pressable
-              onPress={() => setShowAttachMenu(false)}
-              style={styles.attachCancelBtn}
-            >
+            <Pressable onPress={() => setShowAttachMenu(false)} style={styles.attachCancelBtn}>
               <Text style={styles.attachCancelText}>Batal</Text>
             </Pressable>
           </View>
@@ -1773,10 +2188,7 @@ export default function Home() {
         onRequestClose={() => setPreviewImageUri(null)}
       >
         <View style={styles.fullscreenModal}>
-          <Pressable
-            onPress={() => setPreviewImageUri(null)}
-            style={styles.fullscreenCloseBtn}
-          >
+          <Pressable onPress={() => setPreviewImageUri(null)} style={styles.fullscreenCloseBtn}>
             <Text style={styles.fullscreenCloseText}>✕ Tutup</Text>
           </Pressable>
           {previewImageUri && (
@@ -1793,7 +2205,7 @@ export default function Home() {
 }
 
 // ============================================================================
-// STYLES (Clean, Modern, Dark Minimalist Aesthetics)
+// STYLES (Clean, Modern, Dark Minimalist Aesthetics with 16:9 Landscape support)
 // ============================================================================
 const styles = StyleSheet.create({
   root: {
@@ -1801,7 +2213,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#090D14'
   },
   header: {
-    paddingHorizontal: 14,
     paddingBottom: 10,
     backgroundColor: '#0D111A',
     borderBottomWidth: 1,
@@ -1838,6 +2249,17 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '800',
     letterSpacing: 1
+  },
+  landscapePill: {
+    backgroundColor: '#1E3A8A',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4
+  },
+  landscapePillText: {
+    color: '#93C5FD',
+    fontSize: 9,
+    fontWeight: '800'
   },
   modeIndicatorBadge: {
     paddingHorizontal: 6,
@@ -1894,7 +2316,7 @@ const styles = StyleSheet.create({
     flex: 1
   },
   chatContent: {
-    padding: 14,
+    paddingVertical: 12,
     gap: 12
   },
   messageRow: {
@@ -2075,7 +2497,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0D111A',
-    paddingHorizontal: 10,
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#171E2D',
@@ -2156,7 +2577,6 @@ const styles = StyleSheet.create({
     flex: 1
   },
   sidebarContent: {
-    width: Math.min(SCREEN_WIDTH * 0.82, 320),
     backgroundColor: '#0B0F19',
     borderRightWidth: 1,
     borderRightColor: '#1A2234',
@@ -2394,6 +2814,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1D263B'
   },
+  sopModalContainerLandscape: {
+    maxHeight: '94%',
+    maxWidth: 700,
+    alignSelf: 'center',
+    width: '95%',
+    borderRadius: 16
+  },
   sopScrollView: {
     marginVertical: 6
   },
@@ -2434,15 +2861,33 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
 
-  // TRADINGVIEW LIVE MODAL
+  // TRADINGVIEW LIVE MODAL (16:9 Landscape aware)
   tvModalContainer: {
     backgroundColor: '#0D111A',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     padding: 16,
-    maxHeight: '85%',
+    maxHeight: '88%',
     borderWidth: 1,
     borderColor: '#1D263B'
+  },
+  tvModalContainerLandscape: {
+    maxHeight: '96%',
+    maxWidth: 820,
+    alignSelf: 'center',
+    width: '95%',
+    borderRadius: 16
+  },
+  orientationBadge: {
+    backgroundColor: '#1E3A8A',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4
+  },
+  orientationBadgeText: {
+    color: '#93C5FD',
+    fontSize: 9,
+    fontWeight: '800'
   },
   tvSymbolTabs: {
     flexDirection: 'row',
@@ -2469,13 +2914,26 @@ const styles = StyleSheet.create({
   tvSymbolTabTextActive: {
     color: '#FFFFFF'
   },
+  tvScrollArea: {
+    maxHeight: 520
+  },
+  tvLayoutRow: {
+    flexDirection: 'column',
+    gap: 10
+  },
+  tvLayoutRowLandscape: {
+    flexDirection: 'row',
+    gap: 12
+  },
   tvTickerCard: {
     backgroundColor: '#111726',
     borderWidth: 1,
     borderColor: '#1E293B',
     borderRadius: 12,
-    padding: 14,
-    marginBottom: 12
+    padding: 14
+  },
+  tvTickerCardLandscape: {
+    flex: 1
   },
   tvTickerHeaderRow: {
     flexDirection: 'row',
@@ -2505,28 +2963,28 @@ const styles = StyleSheet.create({
   },
   tvPriceBig: {
     color: '#FFFFFF',
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '900',
-    marginVertical: 8
+    marginVertical: 6
   },
   tvStatsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     borderTopWidth: 1,
     borderTopColor: '#1A2338',
-    paddingTop: 10
+    paddingTop: 8
   },
   tvStatItem: {
     alignItems: 'center'
   },
   tvStatLabel: {
     color: '#64748B',
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700'
   },
   tvStatVal: {
     color: '#CBD5E1',
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
     marginTop: 2
   },
@@ -2536,12 +2994,121 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     padding: 20
   },
+
+  // MULTI-TIMEFRAME MATRIX CARD
+  mtfMatrixCard: {
+    backgroundColor: '#111726',
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    borderRadius: 12,
+    padding: 12
+  },
+  mtfMatrixCardLandscape: {
+    flex: 1.2
+  },
+  mtfMatrixTitle: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 8
+  },
+  mtfGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 8
+  },
+  mtfColumn: {
+    flex: 1,
+    backgroundColor: '#0E1422',
+    borderWidth: 1,
+    borderColor: '#1E273E',
+    borderRadius: 8,
+    padding: 8,
+    alignItems: 'center'
+  },
+  mtfColHeader: {
+    color: '#64748B',
+    fontSize: 9.5,
+    fontWeight: '800',
+    marginBottom: 2
+  },
+  mtfColVal: {
+    color: '#F8FAFC',
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  mtfTrendBull: {
+    color: '#34D399'
+  },
+  mtfTrendBear: {
+    color: '#F87171'
+  },
+  mtfSubVal: {
+    color: '#94A3B8',
+    fontSize: 9,
+    marginTop: 2
+  },
+  btcWeatherBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0B1222',
+    borderWidth: 1,
+    borderColor: '#192644',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6
+  },
+  btcWeatherLabel: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  btcWeatherVal: {
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  weatherDump: {
+    color: '#EF4444'
+  },
+  weatherOk: {
+    color: '#34D399'
+  },
+
+  // AUTO ANALYZE BUTTON
+  autoAnalyzeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#065F46',
+    borderWidth: 1,
+    borderColor: '#10B981',
+    borderRadius: 10,
+    padding: 12,
+    marginVertical: 10
+  },
+  autoAnalyzeBtnIcon: {
+    fontSize: 22
+  },
+  autoAnalyzeBtnTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800'
+  },
+  autoAnalyzeBtnSub: {
+    color: '#A7F3D0',
+    fontSize: 10.5,
+    lineHeight: 14,
+    marginTop: 2
+  },
+
   tvOpenExternalButton: {
     backgroundColor: '#2563EB',
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
-    marginBottom: 12
+    marginBottom: 10
   },
   tvOpenExternalText: {
     color: '#FFFFFF',
@@ -2576,6 +3143,13 @@ const styles = StyleSheet.create({
     maxHeight: '85%',
     borderWidth: 1,
     borderColor: '#1D263B'
+  },
+  quotaModalContainerLandscape: {
+    maxHeight: '94%',
+    maxWidth: 680,
+    alignSelf: 'center',
+    width: '95%',
+    borderRadius: 16
   },
   quotaScrollArea: {
     marginVertical: 4
