@@ -9,7 +9,14 @@
     "newArchEnabled": true,
     "plugins": [
       "expo-router",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "NOVA membutuhkan izin galeri untuk memilih dan menganalisis foto.",
+          "cameraPermission": "NOVA membutuhkan izin kamera untuk mengambil foto secara langsung."
+        }
+      ]
     ],
     "android": {
       "package": "com.nova.aiagent"

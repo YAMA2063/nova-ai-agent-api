@@ -11,10 +11,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
     "@nova/shared": "*",
     "expo": "^57.0.0",
+    "expo-clipboard": "~57.0.1",
     "expo-constants": "~57.0.17",
     "expo-haptics": "~57.0.2",
+    "expo-image-picker": "~57.0.16",
     "expo-router": "~57.0.20",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
