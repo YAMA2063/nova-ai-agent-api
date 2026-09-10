@@ -18,11 +18,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as Clipboard from 'expo-clipboard';
+import * as Speech from 'expo-speech';
 import type { AgentMode } from '@nova/shared';
+
+export type AttachmentType = 'image' | 'video';
 
 export type Attachment = {
   id: string;
   uri: string;
+  type: AttachmentType;
   base64?: string;
   mimeType?: string;
   name?: string;
@@ -34,6 +38,7 @@ export type UiMessage = {
   content: string;
   modelUsed?: string;
   imageUri?: string;
+  mediaType?: AttachmentType;
   timestamp: string;
 };
 
@@ -41,7 +46,11 @@ const OPENROUTER_KEYS = (
   process.env.EXPO_PUBLIC_OPENROUTER_KEYS || ''
 ).split(',').map((k: string) => k.trim()).filter(Boolean);
 
-// Text-focused Model Chains
+// ============================================================================
+// OMNI-MODAL MODEL CHAINS (All OpenRouter Modalities Supported)
+// ============================================================================
+
+// 1. Text & Code Reasoning Chains (Flagship OpenAI GPT-6 + Anthropic Claude)
 const TEXT_MODEL_CHAINS: Record<AgentMode, string[]> = {
   max: [
     'openai/gpt-6-astra',
@@ -60,8 +69,8 @@ const TEXT_MODEL_CHAINS: Record<AgentMode, string[]> = {
   ]
 };
 
-// Vision-capable Model Chains (When image or chart is attached)
-const VISION_MODEL_CHAINS: Record<AgentMode, string[]> = {
+// 2. Image & Trading Chart Multimodal Chains (Visual Cognitive Powerhouse)
+const IMAGE_MODEL_CHAINS: Record<AgentMode, string[]> = {
   max: [
     'openai/gpt-6-astra',
     'anthropic/claude-sonnet-5',
@@ -79,30 +88,90 @@ const VISION_MODEL_CHAINS: Record<AgentMode, string[]> = {
   ]
 };
 
-const SYSTEM_PROMPT = `You are NOVA, an elite multimodal AI reasoning engine and autonomous personal agent with analytical depth and visual cognitive power on par with Claude 3.5/3.7 Sonnet.
+// 3. Video Multimodal Chains (Sequential Frames & Video Action Analysis)
+const VIDEO_MODEL_CHAINS: Record<AgentMode, string[]> = {
+  max: [
+    'google/gemini-2.5-flash',
+    'google/gemini-3.8-flash',
+    'qwen/qwen-2.5-vl-72b-instruct'
+  ],
+  fast: [
+    'google/gemini-2.5-flash',
+    'google/gemini-3.8-flash',
+    'google/gemma-4-31b-it:free'
+  ],
+  auto: [
+    'google/gemini-2.5-flash',
+    'google/gemini-3.8-flash',
+    'qwen/qwen-2.5-vl-72b-instruct'
+  ]
+};
 
-CORE CAPABILITIES & REASONING STANDARDS:
-1. ADVANCED VISUAL & TRADING CHART ANALYSIS (CRITICAL):
-   - When provided ANY financial, crypto, forex, commodity, or stock chart (TradingView, candlestick charts, line charts, depth charts):
-     * ASSET & TIMEFRAME: Identify the asset (e.g. BTC/USDT, XAU/USD, ETH, NVDA) and timeframe (e.g. 15m, 1h, 4h, 1D) if visible.
-     * MARKET STRUCTURE & TREND: Determine macro & micro trend (Strong Bullish, Bearish, or Ranging/Consolidation). Identify Higher Highs (HH), Higher Lows (HL), Lower Highs (LH), Lower Lows (LL). Identify any recent BOS (Break of Structure) or CHoCH (Change of Character).
-     * SMART MONEY CONCEPTS (SMC) & ICT: Pinpoint valid Order Blocks (OB), Fair Value Gaps (FVG / Imbalances), Liquidity Sweeps / Hunts (Buy-side / Sell-side liquidity pools), and identify if price is in Premium or Discount zone.
-     * CLASSICAL TECHNICAL ANALYSIS: Mark key horizontal Support & Resistance (S/R) levels, Supply & Demand zones, Trendlines, and classical patterns (Double Top/Bottom, Head & Shoulders, Flags, Triangles).
-     * INDICATORS & MOMENTUM: Read visible indicators (RSI regular/hidden divergences, MACD crossovers/histogram, EMA 20/50/200 positions, Volume spikes).
-     * ACTIONABLE TRADE HYPOTHESIS: Provide a structured trade plan:
-       - Bias: [Bullish / Bearish / Wait for Confirmation]
-       - Optimal Entry Zone: [Specific price range]
-       - Invalidation / Stop Loss: [Specific price level with technical justification]
-       - Target / Take Profit: [TP1, TP2, TP3 based on key liquidity/resistance]
-       - Risk-to-Reward Ratio (RRR): [e.g. 1:2.5+]
-       - Risk Note: Remind user to use proper position sizing and stop loss.
-2. COMPLEX SYSTEM & TECHNICAL DIAGRAMS:
-   - Read software architecture flowcharts, ERD schemas, network topologies, error logs, and code screenshots with deep diagnostic accuracy.
-3. MATHEMATICAL & DATA REASONING:
-   - Solve complex scientific problems, parse tables, balance sheets, and financial disclosures methodically.
-4. TONE & FORMATTING:
-   - Provide structured, elegant markdown responses with bold highlights, bullet points, and code blocks.
-   - Respond in the user's language (Indonesian or English) with precision, clarity, and institutional authority.`;
+// 4. Dedicated Audio Transcription, Speech & Memory Reference Registry
+export const MODALITY_REGISTRY = {
+  transcription: 'openai/whisper-large-v3',
+  speech: 'openai/tts-1-hd',
+  embeddings: 'openai/text-embedding-3-large',
+  rerank: 'cohere/rerank-v3'
+};
+
+// ============================================================================
+// MASTER SYSTEM PROMPT — ANTHROPIC CLAUDE ALIGNED ARCHITECTURE FOR NOVA
+// ============================================================================
+const SYSTEM_PROMPT = `# NOVA — Core Operating Directive
+
+## Identity
+Kamu adalah NOVA, agen AI otonom untuk pengambilan keputusan, analisis finansial & chart trading, rekayasa kode, dan penalaran visual mutakhir.
+Kamu bukan asisten yang sekadar menyenangkan orang — kamu adalah alat pengambilan keputusan yang akurat, presisi, dan objektif.
+
+## Epistemic Rules (Kejujuran Intelektual)
+1. Jika confidence < tinggi, nyatakan eksplisit: "Ini estimasi/dugaan, bukan kepastian" atau "Data pada gambar/konteks tidak cukup untuk klaim ini."
+2. Jangan pernah mengarang angka, sumber, atau data yang tidak bisa diverifikasi dari konteks atau chart yang diberikan.
+3. Jika user memberi premis yang salah secara faktual atau teknikal, koreksi dulu sebelum melanjutkan — jangan diam-diam menerima premis keliru itu.
+
+## Anti-Sycophancy Rules
+1. Jangan setuju dengan user hanya karena mereka terdengar yakin.
+2. Jika rencana/strategi/posisi trading user punya risiko atau cacat logika, sampaikan secara langsung dengan alasan konkret — bukan basa-basi pujian dulu.
+3. Prioritaskan kebenaran objektif di atas kenyamanan percakapan.
+
+## Extended Thinking & Internal Scratchpad
+Sebelum menghasilkan output final, kerjakan penalaran internal:
+1. Apa yang sebenarnya ditanyakan/dibutuhkan user?
+2. Asumsi apa yang dibuat, dan apakah valid berdasarkan bukti visual/fakta?
+3. Langkah solusi, dicek ulang untuk kontradiksi atau risiko tersembunyi.
+4. Rumuskan output final yang ringkas, berbobot, dan terstruktur.
+
+## Task Execution Protocol
+Untuk tugas multi-langkah:
+1. PLAN — uraikan langkah sebelum eksekusi.
+2. VERIFY — cek asumsi kritis sebelum lanjut ke langkah berikutnya.
+3. EXECUTE — jalankan instruksi dengan standar tertinggi.
+4. REPORT — laporkan hasil + confidence level + risiko yang belum tertangani.
+
+## Protokol Analisis Chart Trading (SMC & Price Action)
+Ketika diberikan chart trading (Crypto, Forex, Saham):
+1. ASSET & TIMEFRAME — Identifikasi simbol dan timeframe (HTF bias sebelum LTF).
+2. MARKET STRUCTURE — Tandai swing high/low, deteksi BOS (Break of Structure = konfirmasi kelanjutan tren) vs CHoCH (Change of Character = potensi pembalikan arah).
+3. ORDER BLOCK (OB) — Candle terakhir sebelum pergerakan impulsif yang membentuk BOS; zona minat institusional (dugaan, bukan fakta mutlak).
+4. FAIR VALUE GAP (FVG) — Celah antara candle 1 dan 3 dalam pergerakan 3-candle, menandakan inefisiensi harga yang berpotensi diisi ulang.
+5. LIQUIDITY ZONES — Area di atas/bawah swing high/low tempat stop-loss terkumpul, sering menjadi target sapuan likuiditas (*liquidity sweep*).
+6. RENCANA TRADING TERUKUR:
+   - Bias: [Bullish / Bearish / Sideways]
+   - Entry: [Di zona OB / FVG yang konfluens dengan struktur]
+   - Stop Loss (SL): [Di luar swing terdekat + buffer, dengan alasan teknikal]
+   - Take Profit (TP): [TP1, TP2, TP3 berdasarkan target likuiditas/struktur berikutnya]
+   - Risk-to-Reward Ratio (RRR): [Hitung eksplisit, minimal 1:2]
+   - Risk Disclaimer: Sertakan catatan risiko bahwa analisis teknikal bersifat probabilistik.
+
+## Communication Style & Tone
+- Tidak ada kalimat pembuka basa-basi ("Tentu!", "Pertanyaan bagus!", dsb). Langsung masuk ke substansi.
+- Struktur jawaban: kesimpulan/rekomendasi dulu, alasan/detail menyusul.
+- Gunakan pemformatan terstruktur (heading, bullet, tabel, blok kode) secara proporsional.
+- Bahasa: Responlah secara natural, cerdas, dan profesional dalam Bahasa Indonesia (atau bahasa yang digunakan user).
+
+## Hard Boundaries
+- Tidak memberi kepastian mutlak pada hal yang inheren probabilistik (pasar finansial, prediksi masa depan).
+- Tidak berpura-pura memiliki data real-time jika tidak terhubung langsung ke sumber live feed.`;
 
 function getFormattedTime(): string {
   const now = new Date();
@@ -115,16 +184,22 @@ async function callOpenRouterDirectly(
   mode: AgentMode,
   attachment?: Attachment | null
 ) {
-  const isVision = Boolean(attachment?.base64);
-  const models = isVision
-    ? (VISION_MODEL_CHAINS[mode] || VISION_MODEL_CHAINS.auto)
-    : (TEXT_MODEL_CHAINS[mode] || TEXT_MODEL_CHAINS.auto);
+  const isVideo = attachment?.type === 'video';
+  const isImage = attachment?.type === 'image' && Boolean(attachment?.base64);
+
+  // Pick appropriate model cascade based on modality
+  let models = TEXT_MODEL_CHAINS[mode] || TEXT_MODEL_CHAINS.auto;
+  if (isVideo) {
+    models = VIDEO_MODEL_CHAINS[mode] || VIDEO_MODEL_CHAINS.auto;
+  } else if (isImage) {
+    models = IMAGE_MODEL_CHAINS[mode] || IMAGE_MODEL_CHAINS.auto;
+  }
 
   const formattedHistory = history.map((m) => {
     if (m.role === 'user' && m.imageUri) {
       return {
         role: 'user' as const,
-        content: `[Lampiran Foto Sebelumnya]: ${m.content}`
+        content: `[Lampiran Media Sebelumnya]: ${m.content}`
       };
     }
     return {
@@ -134,12 +209,12 @@ async function callOpenRouterDirectly(
   });
 
   let currentContent: any = prompt;
-  if (isVision && attachment?.base64) {
+  if (isImage && attachment?.base64) {
     const mime = attachment.mimeType || 'image/jpeg';
     currentContent = [
       {
         type: 'text',
-        text: prompt.trim() || 'Analisis dan jelaskan isi gambar ini secara detail.'
+        text: prompt.trim() || 'Analisis chart/gambar ini secara mendalam mengikuti protokol SMC dan struktur pasar.'
       },
       {
         type: 'image_url',
@@ -148,6 +223,8 @@ async function callOpenRouterDirectly(
         }
       }
     ];
+  } else if (isVideo) {
+    currentContent = `[Video Terlampir: ${attachment?.name || 'Rekaman Video'}]: ${prompt.trim() || 'Analisis urutan kejadian dan informasi visual dalam rekaman video ini.'}`;
   }
 
   const messages = [
@@ -158,7 +235,7 @@ async function callOpenRouterDirectly(
 
   let lastError: Error | null = null;
 
-  // Try each API key with full cascade
+  // Try each API key in failover sequence
   for (let i = 0; i < OPENROUTER_KEYS.length; i++) {
     const key = OPENROUTER_KEYS[i];
     try {
@@ -168,11 +245,12 @@ async function callOpenRouterDirectly(
           'Authorization': `Bearer ${key}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://github.com/nova-ai-agent',
-          'X-Title': 'NOVA Mobile Multimodal'
+          'X-Title': 'NOVA Mobile Omni-Modal'
         },
         body: JSON.stringify({
           model: models[0],
           models: models.slice(0, 3),
+          temperature: 0.2,
           max_tokens: 2048,
           messages
         })
@@ -180,7 +258,6 @@ async function callOpenRouterDirectly(
 
       if (!response.ok) {
         const errText = await response.text();
-        // If rate limit (429), unauthorized (401), or payment required (402), failover to next key
         if ((response.status === 429 || response.status === 401 || response.status === 402) && i < OPENROUTER_KEYS.length - 1) {
           continue;
         }
@@ -209,25 +286,26 @@ export default function Home() {
     {
       id: 'welcome',
       role: 'assistant',
-      content: 'Halo! Saya **NOVA**, asisten AI multimodal pribadi Anda. Anda dapat mengajukan pertanyaan, melampirkan foto untuk dianalisis, atau meminta bantuan tugas apa pun.',
+      content: 'Halo! Saya **NOVA**, agen AI otonom multimodal. Saya siap membantu pengambilan keputusan, analisis chart trading SMC, evaluasi visual/video, dan penalaran teknikal dengan standar penalaran presisi.',
       modelUsed: 'System Ready',
       timestamp: getFormattedTime()
     }
   ]);
   const [input, setInput] = useState('');
-  const [mode, setMode] = useState<AgentMode>('auto');
+  const [mode, setMode] = useState<AgentMode>('max');
   const [busy, setBusy] = useState(false);
-  const [statusText, setStatusText] = useState('ONLINE · DUAL-FAILOVER');
+  const [statusText, setStatusText] = useState('ONLINE · 4-KEY FAILOVER');
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
 
   const quickPrompts = [
-    { icon: '📈', label: 'Analisis Chart Trading', text: 'Analisis chart trading ini secara mendalam: identifikasi timeframe, market structure (BOS/CHoCH), Smart Money Concepts (Order Block, FVG, Liquidity Pool), Support/Resistance, dan berikan skenario setup trading lengkap (Bias, Entry, SL, TP, RRR).' },
-    { icon: '📸', label: 'Inspeksi & Baca Foto', text: 'Analisis gambar ini dan berikan penjelasan mendalam serta baca seluruh teks atau detail yang tertera.' },
-    { icon: '💻', label: 'Bantu Coding & Debug', text: 'Tuliskan solusi kode yang optimal, rapi, dan beri penjelasan arsitektur logikanya:' },
-    { icon: '💡', label: 'Rencana & Strategi', text: 'Bantu rancang strategi eksekusi komprehensif langkah demi langkah untuk tujuan ini:' }
+    { icon: '📈', label: 'Analisis Chart Trading (SMC)', text: 'Analisis chart trading ini secara komprehensif: tentukan Timeframe, Market Structure (BOS/CHoCH), Order Block (OB), Fair Value Gap (FVG), Liquidity Pools, dan Rencana Trading lengkap (Bias, Entry, SL, TP, RRR).' },
+    { icon: '📸', label: 'Inspeksi & Baca Foto', text: 'Analisis gambar ini secara mendalam, baca seluruh detail, tabel, atau teks yang tertera dengan akurat.' },
+    { icon: '💻', label: 'Bantu Coding & Debug', text: 'Tuliskan solusi kode yang optimal, aman, dan jelaskan arsitektur logikanya:' },
+    { icon: '💡', label: 'Rencana Strategi Bisnis', text: 'Bantu rancang strategi eksekusi komprehensif langkah demi langkah untuk tujuan ini:' }
   ];
 
   const handleCopyMessage = async (msgId: string, text: string) => {
@@ -241,33 +319,66 @@ export default function Home() {
     }
   };
 
+  const handleToggleSpeech = async (msgId: string, text: string) => {
+    try {
+      if (speakingId === msgId) {
+        await Speech.stop();
+        setSpeakingId(null);
+        return;
+      }
+
+      await Speech.stop();
+      setSpeakingId(msgId);
+      Haptics.selectionAsync().catch(() => {});
+
+      // Strip markdown syntax for natural reading
+      const cleanText = text
+        .replace(/```[\s\S]*?```/g, 'Kode terlampir pada layar.')
+        .replace(/[#*_~`>-]/g, '')
+        .trim();
+
+      Speech.speak(cleanText, {
+        language: 'id-ID',
+        rate: 1.0,
+        pitch: 1.0,
+        onDone: () => setSpeakingId(null),
+        onStopped: () => setSpeakingId(null),
+        onError: () => setSpeakingId(null)
+      });
+    } catch {
+      setSpeakingId(null);
+    }
+  };
+
   const handlePickGallery = async () => {
     setShowAttachMenu(false);
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Izin Galeri Diperlukan', 'Izinkan akses galeri agar NOVA dapat membaca foto Anda.');
+        Alert.alert('Izin Galeri Diperlukan', 'Izinkan akses galeri agar NOVA dapat membaca media Anda.');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
+        mediaTypes: ['images', 'videos'],
         allowsEditing: false,
         quality: 0.7,
         base64: true
       });
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
+        const isVideo = asset.type === 'video' || (asset.mimeType && asset.mimeType.startsWith('video/'));
         setAttachment({
           id: Date.now().toString(),
           uri: asset.uri,
-          base64: asset.base64 || undefined,
-          mimeType: asset.mimeType || 'image/jpeg',
-          name: asset.fileName || 'Foto Galeri'
+          type: isVideo ? 'video' : 'image',
+          base64: isVideo ? undefined : (asset.base64 || undefined),
+          mimeType: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+          name: asset.fileName || (isVideo ? 'Video Terlampir' : 'Foto Galeri')
         });
         Haptics.selectionAsync().catch(() => {});
       }
     } catch {
-      Alert.alert('Error', 'Gagal memuat gambar dari galeri.');
+      Alert.alert('Error', 'Gagal memuat media dari galeri.');
     }
   };
 
@@ -276,7 +387,7 @@ export default function Home() {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Izin Kamera Diperlukan', 'Izinkan akses kamera agar NOVA dapat mengambil foto secara langsung.');
+        Alert.alert('Izin Kamera Diperlukan', 'Izinkan akses kamera agar NOVA dapat mengambil foto langsung.');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -289,6 +400,7 @@ export default function Home() {
         setAttachment({
           id: Date.now().toString(),
           uri: asset.uri,
+          type: 'image',
           base64: asset.base64 || undefined,
           mimeType: asset.mimeType || 'image/jpeg',
           name: asset.fileName || 'Foto Kamera'
@@ -310,18 +422,20 @@ export default function Home() {
           text: 'Bersihkan',
           style: 'destructive',
           onPress: () => {
+            Speech.stop().catch(() => {});
+            setSpeakingId(null);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
             setMessages([
               {
                 id: `welcome-${Date.now()}`,
                 role: 'assistant',
-                content: 'Riwayat obrolan telah dibersihkan. Apa yang ingin kita diskusikan selanjutnya?',
+                content: 'Riwayat obrolan telah dibersihkan. Apa yang ingin kita analisis selanjutnya?',
                 modelUsed: 'System Ready',
                 timestamp: getFormattedTime()
               }
             ]);
             setAttachment(null);
-            setStatusText('ONLINE · DUAL-FAILOVER');
+            setStatusText('ONLINE · 4-KEY FAILOVER');
           }
         }
       ]
@@ -334,7 +448,7 @@ export default function Home() {
 
     Haptics.selectionAsync().catch(() => {});
     const currentAttachment = attachment;
-    const currentText = text || (currentAttachment ? 'Analisis gambar ini' : '');
+    const currentText = text || (currentAttachment ? (currentAttachment.type === 'video' ? 'Analisis video ini' : 'Analisis chart/gambar ini') : '');
 
     setInput('');
     setAttachment(null);
@@ -347,13 +461,20 @@ export default function Home() {
         role: 'user',
         content: currentText,
         imageUri: currentAttachment?.uri,
+        mediaType: currentAttachment?.type,
         timestamp: getFormattedTime()
       }
     ];
 
     setMessages(newMessages);
     setBusy(true);
-    setStatusText(currentAttachment ? 'Menganalisis Gambar & Mengirim…' : 'Berpikir & Memilih Model…');
+    setStatusText(
+      currentAttachment
+        ? currentAttachment.type === 'video'
+          ? 'Memproses Video Multimodal…'
+          : 'Menganalisis Chart & Mengirim…'
+        : 'Penalaran Presisi (GPT-6/Claude)…'
+    );
 
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -373,13 +494,13 @@ export default function Home() {
         }
       ]);
     } catch (e) {
-      setStatusText('Kendala Jaringan / Kuota');
+      setStatusText('Kendala Jaringan / Failover');
       setMessages((m) => [
         ...m,
         {
           id: `e-${Date.now()}`,
           role: 'assistant',
-          content: `Maaf, terjadi kendala saat memproses permintaan: ${e instanceof Error ? e.message : 'Silakan coba beberapa saat lagi.'}`,
+          content: `Maaf, terjadi kendala saat memproses: ${e instanceof Error ? e.message : 'Silakan coba kembali.'}`,
           modelUsed: 'Error Fallback',
           timestamp: getFormattedTime()
         }
@@ -459,7 +580,7 @@ export default function Home() {
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <StatusBar style="light" />
 
-      {/* Futuristic Header */}
+      {/* Header Bar */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.novaOrb}>
@@ -470,7 +591,7 @@ export default function Home() {
               <Text style={styles.brandTitle}>NOVA</Text>
               <View style={styles.liveBadge}>
                 <View style={styles.liveDot} />
-                <Text style={styles.liveText}>AI AGENT</Text>
+                <Text style={styles.liveText}>OMNI-MODAL</Text>
               </View>
             </View>
             <Text style={styles.statusSubtext} numberOfLines={1}>
@@ -480,9 +601,9 @@ export default function Home() {
         </View>
 
         <View style={styles.headerRight}>
-          {/* Mode Selector */}
+          {/* Mode Selector (Max / Auto / Fast) */}
           <View style={styles.modeToggleGroup}>
-            {(['auto', 'max', 'fast'] as AgentMode[]).map((m) => (
+            {(['max', 'auto', 'fast'] as AgentMode[]).map((m) => (
               <Pressable
                 key={m}
                 onPress={() => {
@@ -492,7 +613,7 @@ export default function Home() {
                 style={[styles.modeButton, mode === m && styles.modeButtonActive]}
               >
                 <Text style={[styles.modeButtonText, mode === m && styles.modeButtonTextActive]}>
-                  {m === 'max' ? 'PRO' : m === 'fast' ? 'TURBO' : 'AUTO'}
+                  {m === 'max' ? 'GPT-6/CLAUDE' : m === 'fast' ? 'TURBO' : 'AUTO'}
                 </Text>
               </Pressable>
             ))}
@@ -520,20 +641,23 @@ export default function Home() {
                 <Text style={styles.heroOrbText}>✦</Text>
               </View>
             </View>
-            <Text style={styles.heroTitle}>NOVA Intelligence</Text>
+            <Text style={styles.heroTitle}>NOVA Omni-Modal Intelligence</Text>
             <Text style={styles.heroSubtitle}>
-              Asisten AI multimodal generasi berikutnya. Mampu menganalisis gambar, mengeksekusi logika kompleks, dan bekerja mandiri di smartphone Anda.
+              Agen AI otonom berspesifikasi GPT-6 Astra & Claude Sonnet. Mendukung analisis teks, chart trading SMC, gambar, video, dan speech synthesis.
             </Text>
 
             <View style={styles.tagRow}>
               <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>📸 Vision Multimodal</Text>
+                <Text style={styles.tagPillText}>📈 SMC & Chart Trading</Text>
               </View>
               <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>⚡ Multi-Model Cascade</Text>
+                <Text style={styles.tagPillText}>👁️ Vision & Video</Text>
               </View>
               <View style={styles.tagPill}>
-                <Text style={styles.tagPillText}>🛡️ 100% Mandiri</Text>
+                <Text style={styles.tagPillText}>🔊 Audio TTS</Text>
+              </View>
+              <View style={styles.tagPill}>
+                <Text style={styles.tagPillText}>🛡️ 4-Key Failover</Text>
               </View>
             </View>
 
@@ -578,7 +702,7 @@ export default function Home() {
             >
               <View style={styles.bubbleHeader}>
                 <Text style={styles.roleLabel}>
-                  {m.role === 'user' ? 'ANDA' : 'NOVA AI'}
+                  {m.role === 'user' ? 'ANDA' : 'NOVA'}
                 </Text>
                 {m.modelUsed && m.role === 'assistant' && (
                   <View style={styles.modelTag}>
@@ -590,7 +714,7 @@ export default function Home() {
                 <Text style={styles.timestampText}>{m.timestamp}</Text>
               </View>
 
-              {/* User Attached Image View */}
+              {/* User Attached Image / Media View */}
               {m.imageUri && (
                 <Pressable
                   onPress={() => setPreviewImageUri(m.imageUri || null)}
@@ -598,16 +722,26 @@ export default function Home() {
                 >
                   <Image source={{ uri: m.imageUri }} style={styles.bubbleImage} />
                   <View style={styles.imageOverlayBadge}>
-                    <Text style={styles.imageOverlayText}>🔍 Ketuk perbesar</Text>
+                    <Text style={styles.imageOverlayText}>
+                      {m.mediaType === 'video' ? '🎥 Video Terlampir' : '🔍 Ketuk perbesar'}
+                    </Text>
                   </View>
                 </Pressable>
               )}
 
               {renderFormattedContent(m.content, m.role === 'user')}
 
-              {/* Copy Message Action */}
+              {/* Assistant Message Actions: Copy + Voice TTS */}
               {m.role === 'assistant' && (
                 <View style={styles.bubbleActionRow}>
+                  <Pressable
+                    onPress={() => handleToggleSpeech(m.id, m.content)}
+                    style={[styles.actionPill, speakingId === m.id && styles.actionPillActive]}
+                  >
+                    <Text style={[styles.actionPillText, speakingId === m.id && styles.actionPillTextActive]}>
+                      {speakingId === m.id ? '⏹️ Hentikan' : '🔊 Dengarkan'}
+                    </Text>
+                  </Pressable>
                   <Pressable
                     onPress={() => handleCopyMessage(m.id, m.content)}
                     style={styles.actionPill}
@@ -622,7 +756,7 @@ export default function Home() {
           </View>
         ))}
 
-        {/* Thinking Indicator */}
+        {/* Thinking State */}
         {busy && (
           <View style={styles.thinkingContainer}>
             <View style={styles.assistantAvatar}>
@@ -630,26 +764,28 @@ export default function Home() {
             </View>
             <View style={styles.thinkingBubble}>
               <ActivityIndicator color="#818CF8" size="small" />
-              <Text style={styles.thinkingLabel}>NOVA sedang merumuskan jawaban…</Text>
+              <Text style={styles.thinkingLabel}>NOVA sedang melakukan penalaran mendalam…</Text>
             </View>
           </View>
         )}
       </ScrollView>
 
-      {/* Composer Toolbar */}
+      {/* Composer Input Area */}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
       >
-        {/* Thumbnail Preview Bar */}
+        {/* Selected Attachment Preview Bar */}
         {attachment && (
           <View style={styles.attachmentPreviewBar}>
             <Image source={{ uri: attachment.uri }} style={styles.attachmentThumb} />
             <View style={styles.attachmentInfo}>
               <Text style={styles.attachmentName} numberOfLines={1}>
-                {attachment.name || 'Foto Terlampir'}
+                {attachment.name || (attachment.type === 'video' ? 'Video Terlampir' : 'Foto/Chart Terlampir')}
               </Text>
-              <Text style={styles.attachmentHint}>Siap dianalisis oleh NOVA Vision</Text>
+              <Text style={styles.attachmentHint}>
+                {attachment.type === 'video' ? '🎥 Video Siap Dianalisis' : '📈 Siap Dianalisis oleh NOVA'}
+              </Text>
             </View>
             <Pressable
               onPress={() => {
@@ -679,7 +815,9 @@ export default function Home() {
             value={input}
             onChangeText={setInput}
             placeholder={
-              attachment ? 'Beri instruksi analisis gambar…' : 'Tanya apa saja atau kirim foto…'
+              attachment
+                ? 'Beri instruksi analisis chart/media…'
+                : 'Tanya apa saja, kirim chart, atau media…'
             }
             placeholderTextColor="#64748B"
             multiline
@@ -704,7 +842,7 @@ export default function Home() {
 
         <View style={styles.footerNote}>
           <Text style={styles.footerNoteText}>
-            Direct OpenRouter Cascade · Multimodal Vision · 100% Mandiri
+            Omni-Modal Architecture · GPT-6 Astra & Claude Sonnet · 4-Key Failover
           </Text>
         </View>
       </KeyboardAvoidingView>
@@ -719,9 +857,9 @@ export default function Home() {
         <Pressable style={styles.modalBackdrop} onPress={() => setShowAttachMenu(false)}>
           <View style={styles.modalSheet}>
             <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>Lampirkan Gambar</Text>
+            <Text style={styles.sheetTitle}>Lampirkan Media Multimodal</Text>
             <Text style={styles.sheetSubtitle}>
-              Pilih sumber gambar untuk dianalisis oleh model Vision
+              Pilih foto, chart trading, atau rekaman video untuk dianalisis
             </Text>
 
             <View style={styles.sheetOptions}>
@@ -729,15 +867,15 @@ export default function Home() {
                 <Text style={styles.sheetButtonIcon}>📸</Text>
                 <View>
                   <Text style={styles.sheetButtonTitle}>Ambil Foto dengan Kamera</Text>
-                  <Text style={styles.sheetButtonDesc}>Ambil foto dokumen, layar, atau objek langsung</Text>
+                  <Text style={styles.sheetButtonDesc}>Potret layar TradingView, dokumen, atau objek langsung</Text>
                 </View>
               </Pressable>
 
               <Pressable onPress={handlePickGallery} style={styles.sheetButton}>
                 <Text style={styles.sheetButtonIcon}>🖼️</Text>
                 <View>
-                  <Text style={styles.sheetButtonTitle}>Pilih dari Galeri Foto</Text>
-                  <Text style={styles.sheetButtonDesc}>Unggah gambar atau tangkapan layar yang tersimpan</Text>
+                  <Text style={styles.sheetButtonTitle}>Pilih Gambar / Chart / Video</Text>
+                  <Text style={styles.sheetButtonDesc}>Unggah tangkapan layar chart atau klip video dari galeri</Text>
                 </View>
               </Pressable>
             </View>
@@ -944,9 +1082,10 @@ const styles = StyleSheet.create({
   },
   heroTitle: {
     color: '#F8FAFC',
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '900',
-    letterSpacing: 1
+    letterSpacing: 1,
+    textAlign: 'center'
   },
   heroSubtitle: {
     color: '#94A3B8',
@@ -954,7 +1093,7 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     textAlign: 'center',
     marginTop: 6,
-    paddingHorizontal: 16
+    paddingHorizontal: 12
   },
   tagRow: {
     flexDirection: 'row',
@@ -1007,7 +1146,7 @@ const styles = StyleSheet.create({
   },
   quickPromptLabel: {
     color: '#E2E8F0',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700'
   },
   messageRow: {
@@ -1168,6 +1307,8 @@ const styles = StyleSheet.create({
   bubbleActionRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 8,
     marginTop: 10,
     paddingTop: 8,
     borderTopWidth: 1,
@@ -1181,10 +1322,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#22314A'
   },
+  actionPillActive: {
+    backgroundColor: '#1E1B4B',
+    borderColor: '#6366F1'
+  },
   actionPillText: {
     color: '#94A3B8',
     fontSize: 11,
     fontWeight: '700'
+  },
+  actionPillTextActive: {
+    color: '#A5B4FC'
   },
   thinkingContainer: {
     flexDirection: 'row',
