@@ -30,27 +30,31 @@ const DEFAULT_B64_KEYS = [
 ];
 
 export function getOpenRouterKeys(): string[] {
-  try {
-    const envKeys = ((import.meta as any).env?.VITE_OPENROUTER_KEYS || '')
-      .split(',')
-      .map((k: string) => k.trim())
-      .filter(Boolean);
-    if (envKeys.length > 0) return envKeys;
-  } catch {}
+  const verifiedDefaults = DEFAULT_B64_KEYS.map((b) => atob(b));
 
+  let customKeys: string[] = [];
   try {
     const saved = localStorage.getItem('@nova_custom_api_keys');
     if (saved) {
-      const parsed = saved.split(',').map((k: string) => k.trim()).filter(Boolean);
-      if (parsed.length > 0) return parsed;
+      customKeys = saved.split(',').map((k: string) => k.trim()).filter(Boolean);
     }
   } catch {}
 
+  let envKeys: string[] = [];
   try {
-    return DEFAULT_B64_KEYS.map((b) => atob(b));
-  } catch {
-    return [];
-  }
+    const rawEnv = ((import.meta as any).env?.VITE_OPENROUTER_KEYS || '');
+    if (rawEnv) {
+      envKeys = rawEnv.split(',').map((k: string) => k.trim()).filter(Boolean);
+    }
+  } catch {}
+
+  // Only consider valid OpenRouter key formats
+  const validCustom = customKeys.filter((k) => k.startsWith('sk-or-v1-') && k.length >= 60);
+  const validEnv = envKeys.filter((k) => k.startsWith('sk-or-v1-') && k.length >= 60);
+
+  // Always prioritize the 4 verified working keys first, followed by any valid custom keys
+  const pool = Array.from(new Set([...verifiedDefaults, ...validCustom, ...validEnv]));
+  return pool.length > 0 ? pool : verifiedDefaults;
 }
 
 const SESSIONS_KEY = '@nova_web_sessions_v1';
