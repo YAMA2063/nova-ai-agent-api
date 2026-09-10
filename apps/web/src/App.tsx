@@ -108,25 +108,33 @@ SOP: H4 (Bias) ➡️ M15 (Setup) ➡️ M5 (Eksekusi). Jika arah timeframe bert
 - Hukum Besi Kripto: Bitcoin adalah indeks utama. Algoritma bot mengikat seluruh altcoin ke pergerakan BTC.
 - Selalu cek Cuaca BTC sebelum analisa altcoin. DILARANG Long altcoin jika BTC sedang breakdown/dump agresif!`;
 
-// Model chains with auto-cascading free fallback (Free models first for instant 200 OK)
+// Model chains with auto-cascading free fallback (Active free models prioritized for 100% reliable 200 OK)
 const TEXT_MODELS: Record<AgentMode, string[]> = {
   max: [
-    'nvidia/nemotron-3-super-120b-a12b:free',
     'nex-agi/nex-n2.5-pro:free',
+    'google/gemma-4-31b-it:free',
+    'inclusionai/ling-3.0-flash-fin:free',
     'liquid/lfm-2.5-2.6b:free',
+    'nvidia/nemotron-3.5-lightning:free',
+    'nvidia/nemotron-3-super-120b-a12b:free',
     'openai/gpt-6-astra',
     'anthropic/claude-sonnet-5'
   ],
   fast: [
-    'liquid/lfm-2.5-2.6b:free',
     'nex-agi/nex-n2.5-mini:free',
+    'nex-agi/nex-n2.5-pro:free',
+    'google/gemma-4-31b-it:free',
+    'liquid/lfm-2.5-2.6b:free',
     'google/gemini-3.8-flash',
     'openai/gpt-5.6-luna'
   ],
   auto: [
-    'nvidia/nemotron-3-super-120b-a12b:free',
     'nex-agi/nex-n2.5-pro:free',
+    'google/gemma-4-31b-it:free',
+    'inclusionai/ling-3.0-flash-fin:free',
+    'nex-agi/nex-n2.5-mini:free',
     'liquid/lfm-2.5-2.6b:free',
+    'nvidia/nemotron-3.5-lightning:free',
     'anthropic/claude-sonnet-5',
     'openai/gpt-6-astra'
   ]
@@ -569,8 +577,11 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
     for (const modelCandidate of models) {
       for (const key of activeKeys) {
         try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 18000); // 18s timeout per model attempt
           const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
+            signal: ctrl.signal,
             headers: {
               'Authorization': `Bearer ${key}`,
               'Content-Type': 'application/json',
@@ -583,24 +594,37 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
               messages
             })
           });
+          clearTimeout(timer);
 
           if (!res.ok) {
             const errText = await res.text().catch(() => '');
             console.warn(`[OpenRouter] ${modelCandidate} failed with HTTP ${res.status}:`, errText);
             lastErr = new Error(`HTTP ${res.status}: ${errText.slice(0, 120)}`);
-            if ([400, 401, 402, 404, 429].includes(res.status)) continue;
+            if ([400, 401, 402, 404, 429, 500, 502, 503, 524].includes(res.status)) continue;
             throw lastErr;
           }
 
           const data = await res.json();
+          if (data.error) {
+            console.warn(`[OpenRouter] ${modelCandidate} returned error in body:`, data.error);
+            lastErr = new Error(data.error?.message || `Provider error (${data.error?.code || 500})`);
+            // Upstream provider error is specific to this model, skip to next model candidate immediately
+            break;
+          }
+
           const reply = data.choices?.[0]?.message?.content;
           if (reply) {
             return {
               content: reply,
               model: data.model || modelCandidate
             };
+          } else {
+            console.warn(`[OpenRouter] ${modelCandidate} returned empty content:`, data);
+            lastErr = new Error('Model mengembalikan respon kosong.');
+            break;
           }
-        } catch (e) {
+        } catch (e: any) {
+          console.warn(`[OpenRouter] Exception with ${modelCandidate}:`, e?.message);
           lastErr = e;
         }
       }

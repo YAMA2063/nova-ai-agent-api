@@ -398,37 +398,50 @@ SOP: H4 (Bias) ➡️ M15 (Setup) ➡️ M5 (Eksekusi). Jika arah timeframe bert
 // ============================================================================
 const TEXT_MODEL_CHAINS: Record<AgentMode, string[]> = {
   max: [
+    'nex-agi/nex-n2.5-pro:free',
+    'google/gemma-4-31b-it:free',
+    'inclusionai/ling-3.0-flash-fin:free',
+    'liquid/lfm-2.5-2.6b:free',
+    'nvidia/nemotron-3.5-lightning:free',
     'openai/gpt-6-astra',
-    'anthropic/claude-sonnet-5',
-    'nvidia/nemotron-3-super-120b-a12b:free'
+    'anthropic/claude-sonnet-5'
   ],
   fast: [
+    'nex-agi/nex-n2.5-mini:free',
+    'nex-agi/nex-n2.5-pro:free',
+    'google/gemma-4-31b-it:free',
+    'liquid/lfm-2.5-2.6b:free',
     'google/gemini-3.8-flash',
-    'openai/gpt-5.6-luna',
-    'nvidia/nemotron-3-super-120b-a12b:free'
+    'openai/gpt-5.6-luna'
   ],
   auto: [
+    'nex-agi/nex-n2.5-pro:free',
+    'google/gemma-4-31b-it:free',
+    'inclusionai/ling-3.0-flash-fin:free',
+    'nex-agi/nex-n2.5-mini:free',
+    'liquid/lfm-2.5-2.6b:free',
     'anthropic/claude-sonnet-5',
-    'openai/gpt-6-astra',
-    'nvidia/nemotron-3-super-120b-a12b:free'
+    'openai/gpt-6-astra'
   ]
 };
 
 const IMAGE_MODEL_CHAINS: Record<AgentMode, string[]> = {
   max: [
+    'google/gemma-4-31b-it:free',
+    'nex-agi/nex-n2.5-pro:free',
     'openai/gpt-6-astra',
-    'anthropic/claude-sonnet-5',
-    'google/gemma-4-31b-it:free'
+    'anthropic/claude-sonnet-5'
   ],
   fast: [
+    'google/gemma-4-31b-it:free',
     'google/gemini-3.8-flash',
-    'openai/gpt-6-astra',
-    'google/gemma-4-31b-it:free'
+    'openai/gpt-6-astra'
   ],
   auto: [
+    'google/gemma-4-31b-it:free',
+    'nex-agi/nex-n2.5-pro:free',
     'anthropic/claude-sonnet-5',
-    'openai/gpt-6-astra',
-    'google/gemma-4-31b-it:free'
+    'openai/gpt-6-astra'
   ]
 };
 
@@ -519,52 +532,67 @@ async function callOpenRouterDirectly(
 
   let lastError: Error | null = null;
 
-  for (let i = 0; i < OPENROUTER_KEYS.length; i++) {
-    const key = OPENROUTER_KEYS[i];
-    try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${key}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://github.com/nova-ai-agent',
-          'X-Title': 'NOVA Mobile'
-        },
-        body: JSON.stringify({
-          model: models[0],
-          models: models.slice(0, 3),
-          temperature: chatMode === 'trading' ? 0.15 : 0.4,
-          max_tokens: 2500,
-          messages
-        })
-      });
+  for (const modelCandidate of models) {
+    for (let i = 0; i < OPENROUTER_KEYS.length; i++) {
+      const key = OPENROUTER_KEYS[i];
+      try {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            'X-Title': 'NOVA Mobile'
+          },
+          body: JSON.stringify({
+            model: modelCandidate,
+            temperature: chatMode === 'trading' ? 0.15 : 0.4,
+            max_tokens: 2500,
+            messages
+          })
+        });
 
-      if (!response.ok) {
-        const errText = await response.text();
-        if ((response.status === 429 || response.status === 401 || response.status === 402) && i < OPENROUTER_KEYS.length - 1) {
-          const reason =
-            response.status === 429
-              ? 'Rate Limit (429)'
-              : response.status === 401
-              ? 'Autentikasi (401)'
-              : 'Limit Kuota (402)';
-          onFailover?.(i, i + 1, reason);
+        if (!response.ok) {
+          const errText = await response.text();
+          if ([400, 401, 402, 404, 429, 500, 502, 503].includes(response.status)) {
+            const reason =
+              response.status === 429
+                ? 'Rate Limit (429)'
+                : response.status === 401
+                ? 'Autentikasi (401)'
+                : response.status === 402
+                ? 'Limit Kuota (402)'
+                : `Status (${response.status})`;
+            onFailover?.(i, (i + 1) % OPENROUTER_KEYS.length, reason);
+            lastError = new Error(`OpenRouter (${response.status}): ${errText.slice(0, 100)}`);
+            continue;
+          }
+          throw new Error(`OpenRouter (${response.status}): ${errText}`);
+        }
+
+        const data = await response.json();
+        if (data.error) {
+          lastError = new Error(data.error.message || 'Provider error');
+          // Provider error is specific to this model, advance to next model
+          break;
+        }
+
+        const content = data.choices?.[0]?.message?.content;
+        if (content) {
+          return {
+            content,
+            model: data.model || modelCandidate,
+            keyIndexUsed: i
+          };
+        } else {
+          lastError = new Error('Model mengembalikan respon kosong.');
+          break;
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (i < OPENROUTER_KEYS.length - 1) {
+          onFailover?.(i, i + 1, 'Koneksi Terganggu');
           continue;
         }
-        throw new Error(`OpenRouter (${response.status}): ${errText}`);
-      }
-
-      const data = await response.json();
-      return {
-        content: data.choices?.[0]?.message?.content || 'Tidak ada tanggapan teks.',
-        model: data.model || models[0],
-        keyIndexUsed: i
-      };
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      if (i < OPENROUTER_KEYS.length - 1) {
-        onFailover?.(i, i + 1, 'Koneksi Terganggu');
-        continue;
       }
     }
   }
