@@ -44,8 +44,8 @@ const OPENROUTER_KEYS = (
 // Text-focused Model Chains
 const TEXT_MODEL_CHAINS: Record<AgentMode, string[]> = {
   max: [
+    'openai/gpt-6-astra',
     'anthropic/claude-sonnet-5',
-    'google/gemini-3.8-flash',
     'nvidia/nemotron-3-super-120b-a12b:free'
   ],
   fast: [
@@ -55,26 +55,26 @@ const TEXT_MODEL_CHAINS: Record<AgentMode, string[]> = {
   ],
   auto: [
     'anthropic/claude-sonnet-5',
-    'google/gemini-3.8-flash',
+    'openai/gpt-6-astra',
     'nvidia/nemotron-3-super-120b-a12b:free'
   ]
 };
 
-// Vision-capable Model Chains (When image is attached)
+// Vision-capable Model Chains (When image or chart is attached)
 const VISION_MODEL_CHAINS: Record<AgentMode, string[]> = {
   max: [
+    'openai/gpt-6-astra',
     'anthropic/claude-sonnet-5',
-    'google/gemini-3.8-flash',
     'google/gemma-4-31b-it:free'
   ],
   fast: [
     'google/gemini-3.8-flash',
-    'anthropic/claude-sonnet-5',
+    'openai/gpt-6-astra',
     'google/gemma-4-31b-it:free'
   ],
   auto: [
     'anthropic/claude-sonnet-5',
-    'google/gemini-3.8-flash',
+    'openai/gpt-6-astra',
     'google/gemma-4-31b-it:free'
   ]
 };

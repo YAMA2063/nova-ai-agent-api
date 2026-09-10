@@ -10,8 +10,8 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN || '*',
   openrouterKeys: parseList(process.env.OPENROUTER_API_KEYS, []),
   maxModels: parseList(process.env.OPENROUTER_MAX_MODELS, [
+    'openai/gpt-6-astra',
     'anthropic/claude-sonnet-5',
-    'google/gemini-3.8-flash',
     'nvidia/nemotron-3-super-120b-a12b:free'
   ]),
   fastModels: parseList(process.env.OPENROUTER_FAST_MODELS, [
@@ -21,7 +21,7 @@ export const config = {
   ]),
   autoModels: parseList(process.env.OPENROUTER_AUTO_MODELS, [
     'anthropic/claude-sonnet-5',
-    'google/gemini-3.8-flash',
+    'openai/gpt-6-astra',
     'nvidia/nemotron-3-super-120b-a12b:free'
   ])
 };
