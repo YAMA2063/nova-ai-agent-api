@@ -108,11 +108,28 @@ SOP: H4 (Bias) ➡️ M15 (Setup) ➡️ M5 (Eksekusi). Jika arah timeframe bert
 - Hukum Besi Kripto: Bitcoin adalah indeks utama. Algoritma bot mengikat seluruh altcoin ke pergerakan BTC.
 - Selalu cek Cuaca BTC sebelum analisa altcoin. DILARANG Long altcoin jika BTC sedang breakdown/dump agresif!`;
 
-// Model chains
+// Model chains with auto-cascading free fallback
 const TEXT_MODELS: Record<AgentMode, string[]> = {
-  max: ['openai/gpt-6-astra', 'anthropic/claude-sonnet-5', 'nvidia/nemotron-3-super-120b-a12b:free'],
-  fast: ['google/gemini-3.8-flash', 'openai/gpt-5.6-luna', 'nvidia/nemotron-3-super-120b-a12b:free'],
-  auto: ['anthropic/claude-sonnet-5', 'openai/gpt-6-astra', 'nvidia/nemotron-3-super-120b-a12b:free']
+  max: [
+    'openai/gpt-6-astra',
+    'anthropic/claude-sonnet-5',
+    'nvidia/nemotron-3-super-120b-a12b:free',
+    'nex-agi/nex-n2.5-pro:free',
+    'liquid/lfm-2.5-2.6b:free'
+  ],
+  fast: [
+    'liquid/lfm-2.5-2.6b:free',
+    'nex-agi/nex-n2.5-mini:free',
+    'google/gemini-3.8-flash',
+    'openai/gpt-5.6-luna'
+  ],
+  auto: [
+    'nvidia/nemotron-3-super-120b-a12b:free',
+    'nex-agi/nex-n2.5-pro:free',
+    'anthropic/claude-sonnet-5',
+    'openai/gpt-6-astra',
+    'liquid/lfm-2.5-2.6b:free'
+  ]
 };
 
 function getFormattedTime(): string {
@@ -545,37 +562,42 @@ Lakukan analisis trading sesuai Pedoman Neurobro:
 
     let lastErr: any = null;
     const activeKeys = getOpenRouterKeys();
-    for (const key of activeKeys) {
-      try {
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://github.com/nova-ai-agent',
-            'X-Title': 'NOVA Web'
-          },
-          body: JSON.stringify({
-            model: models[0],
-            models: models.slice(0, 3),
-            temperature: cMode === 'trading' ? 0.15 : 0.4,
-            max_tokens: 2500,
-            messages
-          })
-        });
+    for (const modelCandidate of models) {
+      for (const key of activeKeys) {
+        try {
+          const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${key}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://github.com/nova-ai-agent',
+              'X-Title': 'NOVA Web'
+            },
+            body: JSON.stringify({
+              model: modelCandidate,
+              temperature: cMode === 'trading' ? 0.15 : 0.4,
+              max_tokens: 2500,
+              messages
+            })
+          });
 
-        if (!res.ok) {
-          if (res.status === 429 || res.status === 401) continue;
-          throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            // 402 = Insufficient credits on paid model, 429 = Rate limit, 404 = Model offline, 401 = Key error
+            if ([400, 401, 402, 404, 429].includes(res.status)) continue;
+            throw new Error(`HTTP ${res.status}`);
+          }
+
+          const data = await res.json();
+          const reply = data.choices?.[0]?.message?.content;
+          if (reply) {
+            return {
+              content: reply,
+              model: data.model || modelCandidate
+            };
+          }
+        } catch (e) {
+          lastErr = e;
         }
-
-        const data = await res.json();
-        return {
-          content: data.choices?.[0]?.message?.content || 'Tidak ada tanggapan teks.',
-          model: data.model || models[0]
-        };
-      } catch (e) {
-        lastErr = e;
       }
     }
     throw lastErr || new Error('Gagal menghubungi OpenRouter.');
