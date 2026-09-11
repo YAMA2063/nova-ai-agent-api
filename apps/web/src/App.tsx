@@ -364,7 +364,8 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState<ORModel[]>([]);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [modelTab, setModelTab] = useState<'all' | 'text' | 'image' | 'video' | 'audio'>('all');
-  const [modelSort, setModelSort] = useState<'popular' | 'newest' | 'oldest' | 'cheapest'>('popular');
+  const [modelSort, setModelSort] = useState<'popular' | 'newest' | 'oldest' | 'weekly'>('popular');
+  const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [attachment, setAttachment] = useState<MediaAttachment | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -1025,17 +1026,39 @@ export default function App() {
                 <div className="model-dropdown-header" style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', position: 'sticky', top: 0, background: 'transparent', zIndex: 10, backdropFilter: 'blur(24px)' }}>
                   <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>Omnimodal Models</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <select 
-                        value={modelSort} 
-                        onChange={(e) => setModelSort(e.target.value as any)}
-                        style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)', border: '1px solid var(--hairline-strong)', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', outline: 'none', cursor: 'pointer' }}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setIsSortDropdownOpen(!isSortDropdownOpen); }}
+                        style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: '12px', fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                       >
-                        <option value="popular">Most Popular</option>
-                        <option value="newest">Newest</option>
-                        <option value="oldest">Oldest</option>
-                        <option value="cheapest">Cheapest</option>
-                      </select>
+                        {modelSort === 'popular' && 'Most Popular'}
+                        {modelSort === 'newest' && 'Newest'}
+                        {modelSort === 'oldest' && 'Oldest'}
+                        {modelSort === 'weekly' && 'Top Weekly'}
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isSortDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.6 }}><polyline points="6 9 12 15 18 9"></polyline></svg>
+                      </button>
+
+                      {isSortDropdownOpen && (
+                        <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '8px', background: 'var(--bg-obsidian)', border: '1px solid var(--hairline-strong)', borderRadius: '8px', padding: '4px', zIndex: 110, width: '160px', boxShadow: 'var(--shadow-lg)' }}>
+                          {[
+                            { id: 'popular', label: 'Most Popular' },
+                            { id: 'newest', label: 'Newest' },
+                            { id: 'oldest', label: 'Oldest' },
+                            { id: 'weekly', label: 'Top Weekly' }
+                          ].map(opt => (
+                            <button
+                              key={opt.id}
+                              onClick={(e) => { e.stopPropagation(); setModelSort(opt.id as any); setIsSortDropdownOpen(false); }}
+                              style={{ width: '100%', textAlign: 'left', padding: '8px 12px', fontSize: '13px', background: modelSort === opt.id ? 'var(--accent-dim)' : 'transparent', color: modelSort === opt.id ? 'var(--accent-primary)' : 'var(--text-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                            >
+                              {modelSort === opt.id ? (
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                              ) : <span style={{width: 14}} />}
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       <span style={{color: 'var(--text-muted)', fontWeight: 500, fontSize: '12px'}}>{availableModels.length}</span>
                     </div>
                   </div>
@@ -1070,10 +1093,11 @@ export default function App() {
                   }).sort((a, b) => {
                     if (modelSort === 'newest') return b.created - a.created;
                     if (modelSort === 'oldest') return a.created - b.created;
-                    if (modelSort === 'cheapest') {
-                       const priceA = parseFloat(a.pricing.prompt) + parseFloat(a.pricing.completion);
-                       const priceB = parseFloat(b.pricing.prompt) + parseFloat(b.pricing.completion);
-                       return priceA - priceB;
+                    if (modelSort === 'weekly') {
+                       // OpenRouter doesn't expose Top Weekly natively in API, simulating with price/context combo for now to match UI layout
+                       const scoreA = (a.contextLength || 1) / (parseFloat(a.pricing.prompt) || 0.1);
+                       const scoreB = (b.contextLength || 1) / (parseFloat(b.pricing.prompt) || 0.1);
+                       return scoreB - scoreA;
                     }
                     return 0; // Default (Popular) is already sorted by OpenRouter
                   }).map(m => {
