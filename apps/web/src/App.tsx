@@ -7,7 +7,7 @@ import './App.css';
 // ============================================================================
 const Icons = {
   nova: (
-    <img src="/logo.png" alt="NOVA" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+    <img src="/favicon.svg" alt="NOVA" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
   ),
   plus: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
