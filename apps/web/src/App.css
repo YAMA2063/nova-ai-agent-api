@@ -97,12 +97,8 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+  filter: invert(1) grayscale(1) contrast(500%);
   mix-blend-mode: screen;
-}
-
-body.light .brand-logo-img {
-  filter: invert(1);
-  mix-blend-mode: multiply;
 }
 
 .sidebar-logo-text {
