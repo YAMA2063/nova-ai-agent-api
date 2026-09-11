@@ -1163,6 +1163,35 @@
   background: var(--bg);
 }
 
+.message-body img {
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: 12px;
+  margin-top: 10px;
+  margin-bottom: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  display: block;
+  object-fit: cover;
+  border: 1px solid var(--hairline);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.message-body img:hover {
+  transform: scale(1.01);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+.message-body video {
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: 12px;
+  margin-top: 10px;
+  margin-bottom: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  display: block;
+  border: 1px solid var(--hairline);
+}
+
 .attached-media-container audio {
   width: 100%;
   max-width: 340px;

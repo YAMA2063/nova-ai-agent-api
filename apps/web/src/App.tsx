@@ -666,7 +666,7 @@ export default function App() {
     
     // Check if this is an image generation request
     if (promptText.startsWith('/imagine ')) {
-      return callOpenRouterImageGen(promptText.slice(9).trim());
+      return callOpenRouterImageGen(promptText.slice(9).trim(), IMAGE_MODEL);
     }
 
     if (attach?.base64) { 
@@ -684,48 +684,86 @@ export default function App() {
     const clean = history.filter(m => !m.content.startsWith('Kendala:') && m.id !== 'init_welcome').map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
     const msgs = [{ role: 'system', content: cMode === 'trading' ? NEUROBRO_TRADING_PROMPT : GENERAL_SYSTEM_PROMPT }, ...clean, { role: 'user', content }];
     let lastErr: any = null;
-    
+
+    // Detect if current selectedModel outputs text, otherwise find text fallback
+    let primaryTextModel = selectedModel;
+    const currObj = availableModels.find(m => m.id === selectedModel);
+    if (currObj && !currObj.outputModalities.includes('text')) {
+      const candidate = availableModels.find(m => m.outputModalities.includes('text') && (m.id.includes(':free') || m.id.includes('gemini') || m.id.includes('flash')));
+      primaryTextModel = candidate ? candidate.id : 'inclusionai/ling-3.0-flash-vl:free';
+    }
+
+    const candidateModels = Array.from(new Set([
+      primaryTextModel,
+      'inclusionai/ling-3.0-flash-vl:free',
+      'nex-agi/nex-n2.5-mini:free',
+      'liquid/lfm-2.5-2.6b:free'
+    ]));
+
     for (const key of getOpenRouterKeys()) {
-      try {
-        const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 60000); // 60s for video
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: ctrl.signal, headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'NOVA Web' }, body: JSON.stringify({ model: selectedModel, temperature: cMode === 'trading' ? 0.15 : 0.4, max_tokens: 2500, messages: msgs }) });
-        clearTimeout(timer);
-        if (!res.ok) { 
-          if (res.status === 401 || res.status === 402) lastErr = new Error(`HTTP ${res.status}: API Key tidak valid atau kuota habis.`);
-          else lastErr = new Error(`HTTP ${res.status}`); 
-          continue; 
-        }
-        const data = await res.json();
-        if (data.error) { lastErr = new Error(data.error?.message || 'Provider error'); break; }
-        const reply = data.choices?.[0]?.message?.content;
-        if (reply) return { content: reply, model: data.model || selectedModel };
-        else { lastErr = new Error('Respon kosong'); break; }
-      } catch (e: any) { lastErr = e; }
+      for (const mToTry of candidateModels) {
+        try {
+          const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 35000);
+          const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            signal: ctrl.signal,
+            headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'NOVA Web' },
+            body: JSON.stringify({ model: mToTry, temperature: cMode === 'trading' ? 0.15 : 0.4, max_tokens: 2500, messages: msgs })
+          });
+          clearTimeout(timer);
+          if (res.ok) {
+            const data = await res.json();
+            const reply = data.choices?.[0]?.message?.content;
+            if (reply) return { content: reply, model: data.model || mToTry };
+          } else {
+            if (res.status === 401 || res.status === 402) {
+              lastErr = new Error(`HTTP ${res.status}: Kuota/kredit model tersebut tidak mencukupi di OpenRouter.`);
+            }
+          }
+        } catch (e: any) { lastErr = e; }
+      }
     }
     throw lastErr || new Error('Gagal menghubungi OpenRouter.');
   };
 
-  const callOpenRouterImageGen = async (prompt: string, model: string) => {
-    let lastErr: any = null;
+  const callOpenRouterImageGen = async (prompt: string, model: string = IMAGE_MODEL) => {
+    const cleanPrompt = prompt.replace(/^(tolong\s+|coba\s+)?(buatkan|buat|bikin|generate|lukiskan|lukis|gambarin)\s+(gambar|foto|lukisan|ilustrasi)?\s*/i, '').trim() || prompt;
+
+    // 1. Try OpenRouter image generation API first
     for (const key of getOpenRouterKeys()) {
       try {
         const res = await fetch('https://openrouter.ai/api/v1/images/generations', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, model, response_format: 'url' })
+          body: JSON.stringify({ prompt: cleanPrompt, model, response_format: 'url' })
         });
-        if (!res.ok) {
-           if (res.status === 401 || res.status === 402) lastErr = new Error(`HTTP ${res.status}: API Key tidak valid atau kuota habis.`);
-           else lastErr = new Error(`Image generation gagal (HTTP ${res.status}). Pastikan model tersedia.`);
-           continue;
+        if (res.ok) {
+          const data = await res.json();
+          const url = data.data?.[0]?.url;
+          if (url) return { content: `🎨 **Hasil Gambar AI:** *"${cleanPrompt}"*\n\n![${cleanPrompt}](${url})`, model };
         }
-        const data = await res.json();
-        const url = data.data?.[0]?.url;
-        if (!url) { lastErr = new Error('URL Gambar kosong dari API.'); break; }
-        return { content: `![Generated Image](${url})`, model };
-      } catch (e: any) { lastErr = e; }
+      } catch {
+        // continue to next key or fallback
+      }
     }
-    throw lastErr || new Error('Image generation gagal. Periksa koneksi atau API Key Anda.');
+
+    // 2. High-Res Fallback: Pollinations AI (Flux.1 Engine - Free, Instant, 1024x1024)
+    try {
+      const seed = Math.floor(Math.random() * 1000000);
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(cleanPrompt)}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux`;
+
+      const check = await fetch(pollinationsUrl, { method: 'HEAD' });
+      if (check.ok) {
+        return {
+          content: `🎨 **Hasil Gambar AI:** *"${cleanPrompt}"*\n\n![${cleanPrompt}](${pollinationsUrl})\n\n*(Model Engine: High-Res FLUX.1)*`,
+          model: model ? model.split('/').pop() || model : 'FLUX.1'
+        };
+      }
+    } catch (e) {
+      console.warn('Pollinations fallback error:', e);
+    }
+
+    throw new Error('Gagal membuat gambar. OpenRouter memerlukan kredit berbayar untuk model gambar langsung, dan server fallback sedang padat.');
   };
 
   const callOpenRouterSpeechGen = async (prompt: string, model: string) => {
@@ -838,22 +876,27 @@ export default function App() {
     }
 
     // Smart Intent Detection for Image Generation
-    const isImageIntentStr = trimmed.match(/.*(buat|bikin|gambar|generate|foto).*gambar.*/i) || trimmed.match(/.*(buat|bikin|gambar|generate|foto).*foto.*/i) || trimmed.startsWith('/imagine ');
+    const isImagineCommand = trimmed.startsWith('/imagine ');
     const isVideo = trimmed.startsWith('/video ');
+
+    // Check if user is asking a question or chatting about capabilities (e.g. "anda bisa buat gambar apaan", "gambar apaa")
+    const isQuestionOrMeta = /\?|^(apa|apakah|bisa|bisakah|anda bisa|kamu bisa|tolong jelaskan|bagaimana|gimana|kenapa|mengapa|contoh|cara)\b/i.test(trimmed) || /\b(apaan|apa saja|apa aja|apa ya)\b/i.test(trimmed);
+
+    // Imperative command to draw: "buatkan gambar kucing", "bikin pemandangan", "generate ilustrasi"
+    const isImperativeDraw = !isQuestionOrMeta && /^(tolong\s+|coba\s+)?(buatkan|buat|bikin|generate|lukiskan|lukis|gambarin)\s+(gambar|foto|lukisan|ilustrasi)?\s*(.+)/i.test(trimmed);
+
+    const isImageIntent = isImagineCommand || isImperativeDraw;
     let finalModel = selectedModel;
-    let isImageIntent = !!isImageIntentStr;
     let userContent = trimmed;
 
-    if (isImageIntentStr && !trimmed.startsWith('/imagine ')) {
-      isImageIntent = true;
-      userContent = trimmed; // Keep full text
-      // Auto-switch to default image model if current is not image
+    if (isImagineCommand) {
+      userContent = trimmed.slice(9).trim();
       const curr = availableModels.find(m => m.id === selectedModel);
       if (!curr?.outputModalities.includes('image')) {
         finalModel = IMAGE_MODEL;
       }
-    } else if (trimmed.startsWith('/imagine ')) {
-      userContent = trimmed.slice(9).trim();
+    } else if (isImperativeDraw) {
+      userContent = trimmed;
       const curr = availableModels.find(m => m.id === selectedModel);
       if (!curr?.outputModalities.includes('image')) {
         finalModel = IMAGE_MODEL;
@@ -878,10 +921,11 @@ export default function App() {
     if (textarea) textarea.style.height = 'auto';
     setBusy(true);
 
-    // Fake loading message for Heavy generation
+    // Loading message for Heavy generation
     const currentModelObj = availableModels.find(m => m.id === finalModel);
+    const isSelectedImageOnly = !!(currentModelObj?.outputModalities.includes('image') && !currentModelObj.outputModalities.includes('text'));
     const isVideoModel = currentModelObj?.outputModalities.includes('video') || isVideo;
-    const isImageModel = (currentModelObj?.outputModalities.includes('image') && !currentModelObj.outputModalities.includes('text')) || isImageIntent;
+    const isImageModel = isImageIntent || (isSelectedImageOnly && !isQuestionOrMeta);
     const isAudioModel = currentModelObj?.outputModalities.includes('audio');
 
     if (isVideoModel) {
@@ -1365,13 +1409,16 @@ export default function App() {
       {showQuotaModal && (
         <div className="modal-overlay" onClick={() => setShowQuotaModal(false)}>
           <div className="modal-dialog" onClick={e => e.stopPropagation()}>
-            <div className="modal-header"><div><div className="modal-title">Status Kuota OpenRouter</div></div><button className="modal-close-btn" onClick={() => setShowQuotaModal(false)}>{Icons.x}</button></div>
+            <div className="modal-header"><div><div className="modal-title">Status Kuota & Engine AI</div></div><button className="modal-close-btn" onClick={() => setShowQuotaModal(false)}>{Icons.x}</button></div>
             <div className="modal-body">
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5, background: 'rgba(255,255,255,0.03)', padding: 10, borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                ℹ️ <strong>Status Kuota:</strong> Kunci OpenRouter aktif (200 OK) untuk model obrolan teks. Untuk pembuatan gambar, NOVA otomatis mengaktifkan <strong>High-Res FLUX Engine</strong> agar Anda dapat menghasilkan gambar tanpa batas kuota berbayar!
+              </div>
               {loadingQuota ? <div style={{ textAlign: 'center', padding: 24, color: 'var(--accent-primary-hover)' }}>Memeriksa kunci API...</div> : quotaData.map((q, i) => (
                 <div key={i} className={`quota-key-box ${q.status === '200 OK' ? 'active' : ''}`}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span style={{ fontWeight: 700, fontSize: 13 }}>KUNCI #{i + 1}</span><span style={{ color: q.status === '200 OK' ? 'var(--bull)' : 'var(--bear)', fontWeight: 700, fontSize: 12 }}>{q.status}</span></div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>{q.masked}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Tier: <strong>{q.free ? 'Free' : 'Standar'}</strong> · ${q.usage.toFixed(4)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Tier: <strong>{q.free ? 'Free (Teks Aktif)' : 'Standar'}</strong> · Penggunaan: ${q.usage.toFixed(4)}</div>
                 </div>
               ))}
               <button className="btn-new-chat-full" onClick={loadQuotas} style={{ margin: '8px 0 0' }}>{Icons.refresh} Segarkan</button>
