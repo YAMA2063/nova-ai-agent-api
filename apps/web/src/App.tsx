@@ -7,7 +7,7 @@ import './App.css';
 // ============================================================================
 const Icons = {
   nova: (
-    <img src="/logo.png" alt="NOVA" className="brand-logo-img" />
+    <img src="/logo (1).png" alt="NOVA" className="brand-logo-img" />
   ),
   plus: (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -222,9 +222,9 @@ const DEFAULT_B64_KEYS = [
 export function getOpenRouterKeys(): string[] {
   const verifiedDefaults = DEFAULT_B64_KEYS.map((b) => atob(b));
   let customKeys: string[] = [];
-  try { const saved = localStorage.getItem('@nova_custom_api_keys'); if (saved) customKeys = saved.split(',').map((k: string) => k.trim()).filter(Boolean); } catch {}
+  try { const saved = localStorage.getItem('@nova_custom_api_keys'); if (saved) customKeys = saved.split(',').map((k: string) => k.trim()).filter(Boolean); } catch { }
   let envKeys: string[] = [];
-  try { const rawEnv = ((import.meta as any).env?.VITE_OPENROUTER_KEYS || ''); if (rawEnv) envKeys = rawEnv.split(',').map((k: string) => k.trim()).filter(Boolean); } catch {}
+  try { const rawEnv = ((import.meta as any).env?.VITE_OPENROUTER_KEYS || ''); if (rawEnv) envKeys = rawEnv.split(',').map((k: string) => k.trim()).filter(Boolean); } catch { }
   const validCustom = customKeys.filter((k) => k.startsWith('sk-or-v1-') && k.length >= 60);
   const validEnv = envKeys.filter((k) => k.startsWith('sk-or-v1-') && k.length >= 60);
   return Array.from(new Set([...verifiedDefaults, ...validCustom, ...validEnv]));
@@ -238,9 +238,9 @@ const GENERAL_SYSTEM_PROMPT = `# Identitas & Prinsip NOVA (General Intelligence)
 const NEUROBRO_TRADING_PROMPT = `# NOVA Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
 
 const TEXT_MODELS: Record<AgentMode, string[]> = {
-  max: ['nex-agi/nex-n2.5-pro:free','google/gemma-4-31b-it:free','inclusionai/ling-3.0-flash-fin:free','liquid/lfm-2.5-2.6b:free','nvidia/nemotron-3.5-lightning:free','nvidia/nemotron-3-super-120b-a12b:free','openai/gpt-6-astra','anthropic/claude-sonnet-5'],
-  fast: ['nex-agi/nex-n2.5-mini:free','nex-agi/nex-n2.5-pro:free','google/gemma-4-31b-it:free','liquid/lfm-2.5-2.6b:free','google/gemini-3.8-flash','openai/gpt-5.6-luna'],
-  auto: ['nex-agi/nex-n2.5-pro:free','google/gemma-4-31b-it:free','inclusionai/ling-3.0-flash-fin:free','nex-agi/nex-n2.5-mini:free','liquid/lfm-2.5-2.6b:free','nvidia/nemotron-3.5-lightning:free','anthropic/claude-sonnet-5','openai/gpt-6-astra']
+  max: ['nex-agi/nex-n2.5-pro:free', 'google/gemma-4-31b-it:free', 'inclusionai/ling-3.0-flash-fin:free', 'liquid/lfm-2.5-2.6b:free', 'nvidia/nemotron-3.5-lightning:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'openai/gpt-6-astra', 'anthropic/claude-sonnet-5'],
+  fast: ['nex-agi/nex-n2.5-mini:free', 'nex-agi/nex-n2.5-pro:free', 'google/gemma-4-31b-it:free', 'liquid/lfm-2.5-2.6b:free', 'google/gemini-3.8-flash', 'openai/gpt-5.6-luna'],
+  auto: ['nex-agi/nex-n2.5-pro:free', 'google/gemma-4-31b-it:free', 'inclusionai/ling-3.0-flash-fin:free', 'nex-agi/nex-n2.5-mini:free', 'liquid/lfm-2.5-2.6b:free', 'nvidia/nemotron-3.5-lightning:free', 'anthropic/claude-sonnet-5', 'openai/gpt-6-astra']
 };
 
 function getFormattedTime(): string {
@@ -253,17 +253,17 @@ function getFormattedTime(): string {
 function calculateRsi(closes: number[], period = 14): number {
   if (closes.length < period + 1) return 50;
   let gains = 0, losses = 0;
-  for (let i = 1; i <= period; i++) { const d = closes[i] - closes[i-1]; if (d >= 0) gains += d; else losses += Math.abs(d); }
+  for (let i = 1; i <= period; i++) { const d = closes[i] - closes[i - 1]; if (d >= 0) gains += d; else losses += Math.abs(d); }
   let ag = gains / period, al = losses / period;
-  for (let i = period + 1; i < closes.length; i++) { const d = closes[i] - closes[i-1]; if (d >= 0) { ag = (ag*(period-1)+d)/period; al = (al*(period-1))/period; } else { ag = (ag*(period-1))/period; al = (al*(period-1)+Math.abs(d))/period; } }
+  for (let i = period + 1; i < closes.length; i++) { const d = closes[i] - closes[i - 1]; if (d >= 0) { ag = (ag * (period - 1) + d) / period; al = (al * (period - 1)) / period; } else { ag = (ag * (period - 1)) / period; al = (al * (period - 1) + Math.abs(d)) / period; } }
   if (al === 0) return 100;
-  return Math.round((100 - 100 / (1 + ag/al)) * 100) / 100;
+  return Math.round((100 - 100 / (1 + ag / al)) * 100) / 100;
 }
 
 function calculateMa(v: number[], p = 20): number {
   if (!v.length) return 0;
   const s = v.slice(-p);
-  return Math.round((s.reduce((a,b) => a+b, 0) / s.length) * 100) / 100;
+  return Math.round((s.reduce((a, b) => a + b, 0) / s.length) * 100) / 100;
 }
 
 export async function fetchLiveMarketData(symbol: string) {
@@ -280,17 +280,19 @@ export async function fetchLiveMarketData(symbol: string) {
     ]);
     const h4D = await h4R.json(), m15D = await m15R.json(), m5D = await m5R.json();
     const btcT = btcR ? await btcR.json() : null;
-    const h4C = h4D.map((k:any) => parseFloat(k[4])), h4H = h4D.map((k:any) => parseFloat(k[2])), h4L = h4D.map((k:any) => parseFloat(k[3]));
-    const h4Close = h4C[h4C.length-1], h4High = Math.max(...h4H), h4Low = Math.min(...h4L);
-    const m15C = m15D.map((k:any) => parseFloat(k[4])), m15V = m15D.map((k:any) => parseFloat(k[5]));
-    const m5C = m5D.map((k:any) => parseFloat(k[4])), m5O = m5D.map((k:any) => parseFloat(k[1]));
+    const h4C = h4D.map((k: any) => parseFloat(k[4])), h4H = h4D.map((k: any) => parseFloat(k[2])), h4L = h4D.map((k: any) => parseFloat(k[3]));
+    const h4Close = h4C[h4C.length - 1], h4High = Math.max(...h4H), h4Low = Math.min(...h4L);
+    const m15C = m15D.map((k: any) => parseFloat(k[4])), m15V = m15D.map((k: any) => parseFloat(k[5]));
+    const m5C = m5D.map((k: any) => parseFloat(k[4])), m5O = m5D.map((k: any) => parseFloat(k[1]));
     const m15Rsi = calculateRsi(m15C, 14), m15Vm = calculateMa(m15V, 20);
-    const m15Vr = m15Vm > 0 ? Math.round((m15V[m15V.length-1]/m15Vm)*100)/100 : 1;
-    const m5Rsi = calculateRsi(m5C, 14), m5Candle = m5C[m5C.length-1] >= m5O[m5O.length-1] ? 'BULLISH' : 'BEARISH';
+    const m15Vr = m15Vm > 0 ? Math.round((m15V[m15V.length - 1] / m15Vm) * 100) / 100 : 1;
+    const m5Rsi = calculateRsi(m5C, 14), m5Candle = m5C[m5C.length - 1] >= m5O[m5O.length - 1] ? 'BULLISH' : 'BEARISH';
     let btcW; if (btcT) { const ch = parseFloat(btcT.priceChangePercent); btcW = { price: parseFloat(btcT.lastPrice), change24h: ch, status: ch < -3.5 ? 'DUMP_ALERT' : 'NORMAL' }; }
-    return { symbol: sym, price: parseFloat(ticker.lastPrice), change24h: parseFloat(ticker.priceChangePercent), high24h: parseFloat(ticker.highPrice), low24h: parseFloat(ticker.lowPrice), volume24h: parseFloat(ticker.volume),
-      h4: { lastClose: h4Close, high: h4High, low: h4Low, trend: h4Close > (h4High+h4Low)/2 ? 'BULLISH' : 'BEARISH' },
-      m15: { rsi: m15Rsi, volRatio: m15Vr }, m5: { rsi: m5Rsi, candle: m5Candle }, btcWeather: btcW };
+    return {
+      symbol: sym, price: parseFloat(ticker.lastPrice), change24h: parseFloat(ticker.priceChangePercent), high24h: parseFloat(ticker.highPrice), low24h: parseFloat(ticker.lowPrice), volume24h: parseFloat(ticker.volume),
+      h4: { lastClose: h4Close, high: h4High, low: h4Low, trend: h4Close > (h4High + h4Low) / 2 ? 'BULLISH' : 'BEARISH' },
+      m15: { rsi: m15Rsi, volRatio: m15Vr }, m5: { rsi: m5Rsi, candle: m5Candle }, btcWeather: btcW
+    };
   } catch { return null; }
 }
 
@@ -328,7 +330,7 @@ export default function App() {
   const [loadingQuota, setLoadingQuota] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
 
-  const [confirmState, setConfirmState] = useState<{ open: boolean; title: string; message: string; variant: 'danger' | 'info'; confirmLabel?: string; onConfirm: () => void; }>({ open: false, title: '', message: '', variant: 'info', onConfirm: () => {} });
+  const [confirmState, setConfirmState] = useState<{ open: boolean; title: string; message: string; variant: 'danger' | 'info'; confirmLabel?: string; onConfirm: () => void; }>({ open: false, title: '', message: '', variant: 'info', onConfirm: () => { } });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -363,7 +365,7 @@ export default function App() {
           setCurrentSessionId(savedId && migrated.some((s: any) => s.id === savedId) ? savedId : migrated[0].id);
           return;
         }
-      } catch {}
+      } catch { }
     }
     createInitialSession();
   }, []);
@@ -483,11 +485,11 @@ export default function App() {
   const handleQuickReply = (text: string) => { setInput(text); };
 
   // ── API Call ──
-  const callOpenRouter = async (history: UiMessage[], promptText: string, cMode: 'general'|'trading', aMode: AgentMode, attach?: any) => {
+  const callOpenRouter = async (history: UiMessage[], promptText: string, cMode: 'general' | 'trading', aMode: AgentMode, attach?: any) => {
     const models = TEXT_MODELS[aMode] || TEXT_MODELS.auto;
     let content: any = promptText;
     if (attach?.base64) { content = [{ type: 'text', text: promptText.trim() || 'Analisis gambar ini.' }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${attach.base64}` } }]; }
-    const clean = history.filter(m => !m.content.startsWith('Kendala:') && m.id !== 'init_welcome').map(m => ({ role: m.role as 'user'|'assistant', content: m.content }));
+    const clean = history.filter(m => !m.content.startsWith('Kendala:') && m.id !== 'init_welcome').map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
     const msgs = [{ role: 'system', content: cMode === 'trading' ? NEUROBRO_TRADING_PROMPT : GENERAL_SYSTEM_PROMPT }, ...clean, { role: 'user', content }];
     let lastErr: any = null;
     for (const model of models) {
@@ -518,7 +520,7 @@ export default function App() {
     try {
       const d = await fetchLiveMarketData(symbol);
       if (!d) throw new Error('Gagal tarik data live.');
-      const prompt = `[DATA LIVE BINANCE]: ${d.symbol} $${d.price} (${d.change24h > 0?'+':''}${d.change24h.toFixed(2)}%) | H4: ${d.h4.trend} | M15 RSI: ${d.m15.rsi} Vol: ${d.m15.volRatio}x | M5: ${d.m5.candle} RSI: ${d.m5.rsi}${d.btcWeather ? ` | BTC: $${d.btcWeather.price.toFixed(0)} (${d.btcWeather.status})` : ''}\n\nLakukan analisis trading Neurobro: Bias H4, Setup M15, Entry M5, R:R >= 1:2, Batas Batal.`;
+      const prompt = `[DATA LIVE BINANCE]: ${d.symbol} $${d.price} (${d.change24h > 0 ? '+' : ''}${d.change24h.toFixed(2)}%) | H4: ${d.h4.trend} | M15 RSI: ${d.m15.rsi} Vol: ${d.m15.volRatio}x | M5: ${d.m5.candle} RSI: ${d.m5.rsi}${d.btcWeather ? ` | BTC: $${d.btcWeather.price.toFixed(0)} (${d.btcWeather.status})` : ''}\n\nLakukan analisis trading Neurobro: Bias H4, Setup M15, Entry M5, R:R >= 1:2, Batas Batal.`;
       const result = await callOpenRouter(curMsgs, prompt, 'trading', mode);
       const aMsg: UiMessage = { id: `a_${Date.now()}`, role: 'assistant', content: result.content, modelUsed: result.model.split('/').pop(), timestamp: getFormattedTime() };
       saveSessions(sessions.map(s => s.id === currentSessionId ? { ...s, messages: [...curMsgs, aMsg] } : s));
@@ -577,8 +579,8 @@ export default function App() {
 
       {/* ════════ SIDEBAR ════════ */}
       <aside className={`sidebar ${sidebarMini ? 'mini' : ''} ${sidebarOpen ? 'open' : ''}`}>
-        {/* Brand Row (Full) */}
-        <div className="sidebar-brand-row">
+        {/* Brand Row */}
+        <div className="sidebar-brand-row" onClick={() => { if (window.innerWidth <= 768) setSidebarOpen(!sidebarOpen); else setSidebarMini(!sidebarMini); }} style={{ cursor: 'pointer' }} title={sidebarMini ? 'Buka Sidebar' : 'Tutup Sidebar'}>
           <div className="brand-logo-group">
             <div className="brand-emblem">{Icons.nova}</div>
             <div className="sidebar-logo-text">
@@ -587,15 +589,11 @@ export default function App() {
             </div>
           </div>
           <span className="brand-version">PRO</span>
-          <button className="btn-toggle-sidebar" onClick={() => { if (window.innerWidth <= 768) setSidebarOpen(false); else setSidebarMini(!sidebarMini); }} title={sidebarMini ? 'Buka Sidebar' : 'Tutup Sidebar'}>
-            {Icons.panel}
-          </button>
-          <button className="sidebar-close-btn" onClick={() => setSidebarOpen(false)}>{Icons.x}</button>
+          <button className="sidebar-close-btn" onClick={(e) => { e.stopPropagation(); setSidebarOpen(false); }}>{Icons.x}</button>
         </div>
 
         {/* Mini Icons */}
         <div className="sidebar-mini-icons">
-          <button className="mini-icon-btn" onClick={() => setSidebarMini(false)} title="Buka Sidebar">{Icons.panel}</button>
           <button className="mini-icon-btn accent" onClick={handleNewChat} title="Chat Baru">{Icons.plus}</button>
         </div>
 
@@ -677,7 +675,6 @@ export default function App() {
               <button className="header-btn" onClick={() => setSidebarOpen(!sidebarOpen)} style={{ padding: '6px 8px' }}>{Icons.nova}</button>
             )}
             <div className="header-mode-badge">
-              <div className="status-dot" />
               {chatMode === 'trading' ? 'NOVA Neurobro' : 'NOVA AI'}
             </div>
           </div>
@@ -775,8 +772,8 @@ export default function App() {
             <button className="modal-close-btn" onClick={() => setShowChartPanel(false)}>{Icons.x}</button>
           </div>
           <div className="symbol-tab-bar">
-            {['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XAUUSDT'].map(sym => (
-              <button key={sym} className={`symbol-tab ${selectedSymbol === sym ? 'active' : ''}`} onClick={() => setSelectedSymbol(sym)}>{sym.replace('USDT','/USDT')}</button>
+            {['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XAUUSDT'].map(sym => (
+              <button key={sym} className={`symbol-tab ${selectedSymbol === sym ? 'active' : ''}`} onClick={() => setSelectedSymbol(sym)}>{sym.replace('USDT', '/USDT')}</button>
             ))}
           </div>
           <div className="tv-iframe-wrapper">
@@ -804,11 +801,11 @@ export default function App() {
           <div className="modal-dialog" onClick={e => e.stopPropagation()}>
             <div className="modal-header"><div><div className="modal-title">Pedoman Trading Neurobro</div><div className="modal-subtitle">Aturan baku dari AI YM_Trading</div></div><button className="modal-close-btn" onClick={() => setShowSopModal(false)}>{Icons.x}</button></div>
             <div className="modal-body">
-              <div className="sop-card-item"><div className="sop-card-title">{Icons.brain} Filosofi AI</div><div className="sop-card-content">• <strong>No Hallucination:</strong> Wajib konfirmasi data chart live.<br/>• <strong>Pisahkan Kalkulasi:</strong> Fokus aksi harga faktual.</div></div>
-              <div className="sop-card-item"><div className="sop-card-title">{Icons.zap} Eksekusi</div><div className="sop-card-content">• <strong>Hirarki:</strong> Struktur {'>'} Volume {'>'} Momentum.<br/>• <strong>Breakout vs Fakeout:</strong> Tunggu candle close + retest volume.</div></div>
-              <div className="sop-card-item"><div className="sop-card-title">{Icons.settings} Indikator</div><div className="sop-card-content">• <strong>MACD:</strong> 12/26/9.<br/>• <strong>RSI:</strong> 14. Dilarang short hanya karena RSI {'>'} 70.<br/>• <strong>Volume:</strong> MA 20.</div></div>
-              <div className="sop-card-item"><div className="sop-card-title">{Icons.clock} MTF Top-Down</div><div className="sop-card-content">• <strong>H4:</strong> Bias Utama.<br/>• <strong>M15:</strong> Area Setup.<br/>• <strong>M5:</strong> Konfirmasi Entry.<br/>• <strong>M1:</strong> Diabaikan.</div></div>
-              <div className="sop-card-item"><div className="sop-card-title">{Icons.shield} Validasi</div><div className="sop-card-content">• <strong>R:R:</strong> Minimal 1:2.<br/>• <strong>Fakta vs Narasi:</strong> Dilarang spekulasi.<br/>• <strong>Batas Batal:</strong> Wajib ada harga invalidasi.</div></div>
+              <div className="sop-card-item"><div className="sop-card-title">{Icons.brain} Filosofi AI</div><div className="sop-card-content">• <strong>No Hallucination:</strong> Wajib konfirmasi data chart live.<br />• <strong>Pisahkan Kalkulasi:</strong> Fokus aksi harga faktual.</div></div>
+              <div className="sop-card-item"><div className="sop-card-title">{Icons.zap} Eksekusi</div><div className="sop-card-content">• <strong>Hirarki:</strong> Struktur {'>'} Volume {'>'} Momentum.<br />• <strong>Breakout vs Fakeout:</strong> Tunggu candle close + retest volume.</div></div>
+              <div className="sop-card-item"><div className="sop-card-title">{Icons.settings} Indikator</div><div className="sop-card-content">• <strong>MACD:</strong> 12/26/9.<br />• <strong>RSI:</strong> 14. Dilarang short hanya karena RSI {'>'} 70.<br />• <strong>Volume:</strong> MA 20.</div></div>
+              <div className="sop-card-item"><div className="sop-card-title">{Icons.clock} MTF Top-Down</div><div className="sop-card-content">• <strong>H4:</strong> Bias Utama.<br />• <strong>M15:</strong> Area Setup.<br />• <strong>M5:</strong> Konfirmasi Entry.<br />• <strong>M1:</strong> Diabaikan.</div></div>
+              <div className="sop-card-item"><div className="sop-card-title">{Icons.shield} Validasi</div><div className="sop-card-content">• <strong>R:R:</strong> Minimal 1:2.<br />• <strong>Fakta vs Narasi:</strong> Dilarang spekulasi.<br />• <strong>Batas Batal:</strong> Wajib ada harga invalidasi.</div></div>
               <button className="btn-new-chat-full" style={{ background: 'var(--gradient-emerald)', margin: '10px 0 0' }} onClick={() => { handleToggleMode('trading'); setShowSopModal(false); }}>{Icons.zap} Terapkan Mode Trading</button>
             </div>
           </div>
@@ -822,7 +819,7 @@ export default function App() {
             <div className="modal-body">
               {loadingQuota ? <div style={{ textAlign: 'center', padding: 24, color: 'var(--accent-primary-hover)' }}>Memeriksa kunci API...</div> : quotaData.map((q, i) => (
                 <div key={i} className={`quota-key-box ${q.status === '200 OK' ? 'active' : ''}`}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span style={{ fontWeight: 700, fontSize: 13 }}>KUNCI #{i+1}</span><span style={{ color: q.status === '200 OK' ? 'var(--bull)' : 'var(--bear)', fontWeight: 700, fontSize: 12 }}>{q.status}</span></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span style={{ fontWeight: 700, fontSize: 13 }}>KUNCI #{i + 1}</span><span style={{ color: q.status === '200 OK' ? 'var(--bull)' : 'var(--bear)', fontWeight: 700, fontSize: 12 }}>{q.status}</span></div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>{q.masked}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Tier: <strong>{q.free ? 'Free' : 'Standar'}</strong> · ${q.usage.toFixed(4)}</div>
                 </div>
