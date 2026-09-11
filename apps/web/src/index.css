@@ -9,11 +9,11 @@
 
 :root {
   /* ── Surfaces ── */
-  --bg-void: #05070C;
-  --bg-obsidian: #0A0E18;
-  --bg-panel: #0F1422;
-  --bg-panel-raised: #151C2E;
-  --bg-input: #0C1120;
+  --bg-void: #000000;
+  --bg-obsidian: #0A0A0A;
+  --bg-panel: #111111;
+  --bg-panel-raised: #1A1A1A;
+  --bg-input: #111111;
 
   /* ── Glass Surfaces ── */
   --glass-bg: rgba(12, 17, 30, 0.72);

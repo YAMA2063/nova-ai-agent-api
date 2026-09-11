@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import './App.css';
 
 // ============================================================================
@@ -7,7 +8,7 @@ import './App.css';
 // ============================================================================
 const Icons = {
   nova: (
-    <img src="/nova logo.png" alt="NOVA" className="brand-logo-img" />
+    <img src="/nova%20logo.png" alt="NOVA" className="brand-logo-img" />
   ),
   plus: (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -174,14 +175,45 @@ const Icons = {
       <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
     </svg>
   ),
+  film: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
+      <line x1="7" y1="2" x2="7" y2="22" /><line x1="17" y1="2" x2="17" y2="22" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <line x1="2" y1="7" x2="7" y2="7" /><line x1="2" y1="17" x2="7" y2="17" />
+      <line x1="17" y1="7" x2="22" y2="7" /><line x1="17" y1="17" x2="22" y2="17" />
+    </svg>
+  ),
+  paperclip: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  ),
+  headphones: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+      <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+    </svg>
+  )
 };
 
 // ============================================================================
 // TYPES
 // ============================================================================
-export type UiMessage = { id: string; role: 'user' | 'assistant'; content: string; modelUsed?: string; imageUri?: string; timestamp: string; };
+export type MediaType = 'image' | 'video' | 'audio';
+export type MediaAttachment = { uri: string; base64: string; name: string; type: MediaType };
+export type UiMessage = { id: string; role: 'user' | 'assistant'; content: string; modelUsed?: string; attachment?: MediaAttachment; timestamp: string; };
 export type ChatSession = { id: string; title: string; createdAt: number; updatedAt: number; mode: 'general' | 'trading'; messages: UiMessage[]; pinned: boolean; };
-export type AgentMode = 'max' | 'fast' | 'auto';
+
+export type ORModel = { 
+  id: string; 
+  name: string; 
+  description: string; 
+  pricing: { prompt: string; completion: string };
+  contextLength: number;
+  inputModalities: string[];
+  outputModalities: string[];
+};
 
 // ============================================================================
 // CONFIRM MODAL (CSS class-based show/hide for smooth transitions)
@@ -212,6 +244,11 @@ function ConfirmModal({ open, title, message, confirmLabel, cancelLabel, variant
 // ============================================================================
 // API KEYS & CONFIG
 // ============================================================================
+// ⚠️ SECURITY NOTE: These keys ship inside the client bundle and can be
+// extracted by anyone via DevTools (just atob() them). Anyone can then spend
+// your OpenRouter quota. For a real production app, move all OpenRouter
+// calls behind your own backend/serverless proxy that holds the keys
+// server-side, and never embed real credentials in frontend code.
 const DEFAULT_B64_KEYS = [
   'c2stb3ItdjEtMjc0YmU4Y2QyMjJkMDIyM2Q2MjE2ZTg1MzZiYjRhZGE3M2M4ZGZmMzI1OWQ3YzczNDQ4N2I4MzkyYTcxNTc1Yg==',
   'c2stb3ItdjEtNmI3MTg2ZTk2ODFjMzQwNGQ1NzY2ODQ5MDc4MjhhM2ZjNzFmNmI5MjgzZmIyMTQ3MGI1YTUwNzVhM2Y2NWY4MQ==',
@@ -237,11 +274,8 @@ const GENERAL_SYSTEM_PROMPT = `# Identitas & Prinsip NOVA (General Intelligence)
 
 const NEUROBRO_TRADING_PROMPT = `# NOVA Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
 
-const TEXT_MODELS: Record<AgentMode, string[]> = {
-  max: ['nex-agi/nex-n2.5-pro:free', 'google/gemma-4-31b-it:free', 'inclusionai/ling-3.0-flash-fin:free', 'liquid/lfm-2.5-2.6b:free', 'nvidia/nemotron-3.5-lightning:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'openai/gpt-6-astra', 'anthropic/claude-sonnet-5'],
-  fast: ['nex-agi/nex-n2.5-mini:free', 'nex-agi/nex-n2.5-pro:free', 'google/gemma-4-31b-it:free', 'liquid/lfm-2.5-2.6b:free', 'google/gemini-3.8-flash', 'openai/gpt-5.6-luna'],
-  auto: ['nex-agi/nex-n2.5-pro:free', 'google/gemma-4-31b-it:free', 'inclusionai/ling-3.0-flash-fin:free', 'nex-agi/nex-n2.5-mini:free', 'liquid/lfm-2.5-2.6b:free', 'nvidia/nemotron-3.5-lightning:free', 'anthropic/claude-sonnet-5', 'openai/gpt-6-astra']
-};
+const IMAGE_MODEL = 'black-forest-labs/flux-schnell';
+const TTS_MODEL = 'openai/tts-1';
 
 function getFormattedTime(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -256,6 +290,10 @@ function calculateRsi(closes: number[], period = 14): number {
   for (let i = 1; i <= period; i++) { const d = closes[i] - closes[i - 1]; if (d >= 0) gains += d; else losses += Math.abs(d); }
   let ag = gains / period, al = losses / period;
   for (let i = period + 1; i < closes.length; i++) { const d = closes[i] - closes[i - 1]; if (d >= 0) { ag = (ag * (period - 1) + d) / period; al = (al * (period - 1)) / period; } else { ag = (ag * (period - 1)) / period; al = (al * (period - 1) + Math.abs(d)) / period; } }
+  // FIX: flat price (no gains AND no losses) should read as neutral (50),
+  // not "maximally overbought" (100). Only saturate to 100 when there were
+  // real gains but literally zero losses.
+  if (ag === 0 && al === 0) return 50;
   if (al === 0) return 100;
   return Math.round((100 - 100 / (1 + ag / al)) * 100) / 100;
 }
@@ -297,7 +335,16 @@ export async function fetchLiveMarketData(symbol: string) {
 }
 
 function MarkdownContent({ content }: { content: string }) {
-  const html = useMemo(() => { try { return marked.parse(content || '', { breaks: true, gfm: true }) as string; } catch { return content || ''; } }, [content]);
+  const html = useMemo(() => {
+    try {
+      const raw = marked.parse(content || '', { breaks: true, gfm: true }) as string;
+      // FIX: sanitize before injecting via dangerouslySetInnerHTML.
+      // Model output is untrusted content (it can be influenced by prompt
+      // injection from pasted text/images), so rendering its raw HTML
+      // without sanitizing is an XSS vector. Requires: npm i dompurify
+      return DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] });
+    } catch { return ''; }
+  }, [content]);
   return <div className="message-body prose" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
@@ -306,18 +353,23 @@ function MarkdownContent({ content }: { content: string }) {
 // ============================================================================
 export default function App() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState('');
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sidebarMini, setSidebarMini] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isDark, setIsDark] = useState(true);
 
   const [input, setInput] = useState('');
-  const [mode, setMode] = useState<AgentMode>('max');
+  const [selectedModel, setSelectedModel] = useState('google/gemini-1.5-pro');
+  const [availableModels, setAvailableModels] = useState<ORModel[]>([]);
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [modelTab, setModelTab] = useState<'all' | 'text' | 'image' | 'video' | 'audio'>('all');
   const [busy, setBusy] = useState(false);
-  const [attachment, setAttachment] = useState<{ uri: string; base64: string; name: string } | null>(null);
+  const [attachment, setAttachment] = useState<MediaAttachment | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
-  const [isListening, setIsListening] = useState(false);
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const [showChartPanel, setShowChartPanel] = useState(true);
   const [selectedSymbol, setSelectedSymbol] = useState('BTCUSDT');
@@ -325,10 +377,55 @@ export default function App() {
 
   const [showSopModal, setShowSopModal] = useState(false);
   const [showQuotaModal, setShowQuotaModal] = useState(false);
-  const [showModelModal, setShowModelModal] = useState(false);
-  const [quotaData, setQuotaData] = useState<any[]>([]);
+  const [quotaData, setQuotaData] = useState<{ masked: string, status: string, usage: number, free: boolean }[]>([]);
   const [loadingQuota, setLoadingQuota] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+
+  // Fetch available models from OpenRouter
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        const res = await fetch('https://openrouter.ai/api/v1/models?output_modalities=image,video,audio,speech,text');
+        const data = await res.json();
+        if (data && data.data) {
+          const mapped: ORModel[] = data.data.map((m: any) => ({
+            id: m.id,
+            name: m.name || m.id,
+            description: m.description || '',
+            pricing: {
+              prompt: m.pricing?.prompt || '0',
+              completion: m.pricing?.completion || '0'
+            },
+            contextLength: m.top_provider?.context_length || m.context_length || 0,
+            inputModalities: m.architecture?.input_modalities || ['text'],
+            outputModalities: m.architecture?.output_modalities || ['text']
+          }));
+          
+          const sorted = mapped.sort((a, b) => {
+             const aFree = a.pricing.prompt === '0' || a.pricing.prompt === '0.0';
+             const bFree = b.pricing.prompt === '0' || b.pricing.prompt === '0.0';
+             if (aFree && !bFree) return -1;
+             if (!aFree && bFree) return 1;
+             return 0;
+          });
+          setAvailableModels(sorted);
+        }
+      } catch (err) {
+        console.error('Failed to fetch models', err);
+      }
+    };
+    fetchModels();
+  }, []);
+
+  // FIX: window.innerWidth read directly in JSX is not reactive — resizing
+  // the window (or rotating a device) didn't update the hamburger button /
+  // sidebar-toggle behavior until some unrelated re-render happened.
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const [confirmState, setConfirmState] = useState<{ open: boolean; title: string; message: string; variant: 'danger' | 'info'; confirmLabel?: string; onConfirm: () => void; }>({ open: false, title: '', message: '', variant: 'info', onConfirm: () => { } });
 
@@ -341,7 +438,10 @@ export default function App() {
 
   // Close dropdowns on outside click
   useEffect(() => {
-    const handler = () => setOpenDropdownId(null);
+    const handler = () => {
+      setOpenDropdownId(null);
+      setIsModelDropdownOpen(false);
+    };
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, []);
@@ -378,9 +478,22 @@ export default function App() {
     localStorage.setItem(ACTIVE_SESSION_KEY, s.id);
   };
 
-  const saveSessions = (updated: ChatSession[], activeId?: string) => {
-    setSessions(updated);
-    localStorage.setItem(SESSIONS_KEY, JSON.stringify(updated));
+  // FIX: saveSessions now also accepts a functional updater `(prev) => next`.
+  // Places that save *after* an `await` (e.g. once an AI response comes back)
+  // now use the functional form so they always build on the latest state
+  // instead of a state snapshot captured before the await — previously, any
+  // session changes made while a request was in flight (deleting another
+  // chat, pinning, etc.) could get silently overwritten when the response
+  // finally landed.
+  const saveSessions = (
+    updater: ChatSession[] | ((prev: ChatSession[]) => ChatSession[]),
+    activeId?: string
+  ) => {
+    setSessions(prev => {
+      const updated = typeof updater === 'function' ? (updater as (p: ChatSession[]) => ChatSession[])(prev) : updater;
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(updated));
+      return updated;
+    });
     if (activeId) { setCurrentSessionId(activeId); localStorage.setItem(ACTIVE_SESSION_KEY, activeId); }
   };
 
@@ -405,12 +518,12 @@ export default function App() {
   // ── Handlers ──
   const handleNewChat = () => {
     const s: ChatSession = { id: `s_${Date.now()}`, title: 'Percakapan Baru', createdAt: Date.now(), updatedAt: Date.now(), mode: chatMode, pinned: false, messages: [] };
-    saveSessions([s, ...sessions.filter(x => x.pinned), ...sessions.filter(x => !x.pinned)], s.id);
+    saveSessions(prev => [s, ...prev.filter(x => x.pinned), ...prev.filter(x => !x.pinned)], s.id);
     setSidebarOpen(false);
   };
 
   const handleToggleMode = (m: 'general' | 'trading') => {
-    saveSessions(sessions.map(s => s.id === currentSessionId ? { ...s, mode: m } : s));
+    saveSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, mode: m } : s));
   };
 
   const handleTogglePin = (id: string) => {
@@ -423,7 +536,7 @@ export default function App() {
         return;
       }
     }
-    saveSessions(sessions.map(s => s.id === id ? { ...s, pinned: !s.pinned } : s));
+    saveSessions(prev => prev.map(s => s.id === id ? { ...s, pinned: !s.pinned } : s));
     setOpenDropdownId(null);
   };
 
@@ -437,7 +550,7 @@ export default function App() {
       onConfirm: () => {
         const updated = sessions.filter(s => s.id !== id);
         if (updated.length === 0) createInitialSession();
-        else saveSessions(updated, currentSessionId === id ? updated[0].id : currentSessionId);
+        else saveSessions(updated, currentSessionId === id ? updated[0].id : (currentSessionId || undefined));
         setConfirmState(p => ({ ...p, open: false }));
       }
     });
@@ -452,32 +565,97 @@ export default function App() {
     });
   };
 
-  const handleToggleVoiceInput = () => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return;
-    if (isListening) { setIsListening(false); return; }
+  const handleToggleVoiceRecord = async () => {
+    if (isRecordingAudio) {
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.stop();
+        setIsRecordingAudio(false);
+      }
+      return;
+    }
+
     try {
-      const r = new SR(); r.lang = 'id-ID'; r.continuous = false; r.interimResults = false;
-      r.onstart = () => setIsListening(true); r.onend = () => setIsListening(false); r.onerror = () => setIsListening(false);
-      r.onresult = (e: any) => { setInput(p => (p ? `${p} ${e.results[0][0].transcript}` : e.results[0][0].transcript)); };
-      r.start();
-    } catch { setIsListening(false); }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const file = new File([audioBlob], 'voice_message.webm', { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.onload = () => {
+          const b64 = (reader.result as string).split(',')[1];
+          setAttachment({ uri: reader.result as string, base64: b64, name: 'Rekaman Suara', type: 'audio' });
+        };
+        reader.readAsDataURL(file);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecordingAudio(true);
+    } catch (err) {
+      alert('Akses mikrofon ditolak atau tidak tersedia.');
+    }
   };
 
-  const handleToggleTts = (id: string, text: string) => {
-    if (speakingId === id) { window.speechSynthesis.cancel(); setSpeakingId(null); return; }
-    window.speechSynthesis.cancel(); setSpeakingId(id);
-    const u = new SpeechSynthesisUtterance(text.slice(0, 800)); u.lang = 'id-ID';
-    u.onend = () => setSpeakingId(null); u.onerror = () => setSpeakingId(null);
-    window.speechSynthesis.speak(u);
+  const handleToggleTts = async (id: string, text: string) => {
+    if (speakingId === id) {
+      const el = document.getElementById(`audio-${id}`) as HTMLAudioElement;
+      if (el) { el.pause(); el.currentTime = 0; }
+      setSpeakingId(null);
+      return;
+    }
+    setSpeakingId(id);
+    
+    // Check if audio element already exists
+    let el = document.getElementById(`audio-${id}`) as HTMLAudioElement;
+    if (el) {
+      el.play();
+      return;
+    }
+
+    try {
+      const key = getOpenRouterKeys()[0];
+      const res = await fetch('https://openrouter.ai/api/v1/audio/speech', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: TTS_MODEL, input: text, voice: 'alloy' })
+      });
+      if (!res.ok) throw new Error('TTS Gagal');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      el = new Audio(url);
+      el.id = `audio-${id}`;
+      el.onended = () => setSpeakingId(null);
+      el.onerror = () => setSpeakingId(null);
+      document.body.appendChild(el);
+      el.play();
+    } catch (err) {
+      alert('Gagal mensintesis suara OpenRouter.');
+      setSpeakingId(null);
+    }
   };
 
   const handleCopy = (id: string, text: string) => { navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000); };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return;
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    let type: MediaType = 'image';
+    if (file.type.startsWith('video/')) type = 'video';
+    if (file.type.startsWith('audio/')) type = 'audio';
+
     const reader = new FileReader();
-    reader.onload = () => { const b64 = (reader.result as string).split(',')[1]; setAttachment({ uri: reader.result as string, base64: b64, name: file.name }); };
+    reader.onload = () => { 
+      const b64 = (reader.result as string).split(',')[1]; 
+      setAttachment({ uri: reader.result as string, base64: b64, name: file.name, type }); 
+    };
     reader.readAsDataURL(file);
   };
 
@@ -485,48 +663,141 @@ export default function App() {
   const handleQuickReply = (text: string) => { setInput(text); };
 
   // ── API Call ──
-  const callOpenRouter = async (history: UiMessage[], promptText: string, cMode: 'general' | 'trading', aMode: AgentMode, attach?: any) => {
-    const models = TEXT_MODELS[aMode] || TEXT_MODELS.auto;
+  const callOpenRouter = async (history: UiMessage[], promptText: string, cMode: 'general' | 'trading', attach?: MediaAttachment) => {
     let content: any = promptText;
-    if (attach?.base64) { content = [{ type: 'text', text: promptText.trim() || 'Analisis gambar ini.' }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${attach.base64}` } }]; }
+    
+    // Check if this is an image generation request
+    if (promptText.startsWith('/imagine ')) {
+      return callOpenRouterImageGen(promptText.slice(9).trim());
+    }
+
+    if (attach?.base64) { 
+      let mediaTypePrefix = '';
+      if (attach.type === 'video') mediaTypePrefix = 'data:video/mp4;base64,';
+      else if (attach.type === 'audio') mediaTypePrefix = 'data:audio/mp3;base64,';
+      else mediaTypePrefix = 'data:image/jpeg;base64,';
+      
+      content = [
+        { type: 'text', text: promptText.trim() || 'Analisis media ini.' }, 
+        { type: 'image_url', image_url: { url: `${mediaTypePrefix}${attach.base64}` } }
+      ]; 
+    }
+    
     const clean = history.filter(m => !m.content.startsWith('Kendala:') && m.id !== 'init_welcome').map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
     const msgs = [{ role: 'system', content: cMode === 'trading' ? NEUROBRO_TRADING_PROMPT : GENERAL_SYSTEM_PROMPT }, ...clean, { role: 'user', content }];
     let lastErr: any = null;
-    for (const model of models) {
-      for (const key of getOpenRouterKeys()) {
-        try {
-          const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 18000);
-          const res = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: ctrl.signal, headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'NOVA Web' }, body: JSON.stringify({ model, temperature: cMode === 'trading' ? 0.15 : 0.4, max_tokens: 2500, messages: msgs }) });
-          clearTimeout(timer);
-          if (!res.ok) { lastErr = new Error(`HTTP ${res.status}`); continue; }
-          const data = await res.json();
-          if (data.error) { lastErr = new Error(data.error?.message || 'Provider error'); break; }
-          const reply = data.choices?.[0]?.message?.content;
-          if (reply) return { content: reply, model: data.model || model };
-          else { lastErr = new Error('Respon kosong'); break; }
-        } catch (e: any) { lastErr = e; }
-      }
+    
+    for (const key of getOpenRouterKeys()) {
+      try {
+        const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 60000); // 60s for video
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: ctrl.signal, headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'NOVA Web' }, body: JSON.stringify({ model: selectedModel, temperature: cMode === 'trading' ? 0.15 : 0.4, max_tokens: 2500, messages: msgs }) });
+        clearTimeout(timer);
+        if (!res.ok) { lastErr = new Error(`HTTP ${res.status}`); continue; }
+        const data = await res.json();
+        if (data.error) { lastErr = new Error(data.error?.message || 'Provider error'); break; }
+        const reply = data.choices?.[0]?.message?.content;
+        if (reply) return { content: reply, model: data.model || selectedModel };
+        else { lastErr = new Error('Respon kosong'); break; }
+      } catch (e: any) { lastErr = e; }
     }
     throw lastErr || new Error('Gagal menghubungi OpenRouter.');
   };
 
+  const callOpenRouterImageGen = async (prompt: string) => {
+    const key = getOpenRouterKeys()[0];
+    // We use standard OpenAI API structure for Images via OpenRouter
+    const res = await fetch('https://openrouter.ai/api/v1/images/generations', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, model: IMAGE_MODEL, response_format: 'url' })
+    });
+    if (!res.ok) throw new Error('Image generation gagal. Pastikan model tersedia.');
+    const data = await res.json();
+    const url = data.data?.[0]?.url;
+    if (!url) throw new Error('URL Gambar kosong dari API.');
+    return { content: `![Generated Image](${url})`, model: IMAGE_MODEL };
+  };
+
+  const callOpenRouterSpeechGen = async (prompt: string, model: string) => {
+    const key = getOpenRouterKeys()[0];
+    const res = await fetch('https://openrouter.ai/api/v1/audio/speech', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: prompt, model, voice: 'alloy' })
+    });
+    
+    if (!res.ok) throw new Error('Speech generation request gagal.');
+    
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+       const data = await res.json();
+       const url = data.url || data.data?.url || data.data?.[0]?.url;
+       if (url) return { content: `<audio controls src="${url}"></audio>`, model };
+       throw new Error('Gagal mem-parsing URL audio.');
+    } else {
+       const blob = await res.blob();
+       const url = URL.createObjectURL(blob);
+       return { content: `<audio controls src="${url}"></audio>`, model };
+    }
+  };
+
+  const callOpenRouterVideoGen = async (prompt: string, model: string) => {
+    const key = getOpenRouterKeys()[0];
+    const startRes = await fetch('https://openrouter.ai/api/v1/videos', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, model })
+    });
+    
+    if (!startRes.ok) throw new Error('Gagal memulai render video. Pastikan model mendukung video.');
+    const startData = await startRes.json();
+    const jobId = startData.id || startData.data?.id;
+    if (!jobId) throw new Error('Gagal mendapatkan Job ID Video.');
+
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 10000));
+      const pollRes = await fetch(`https://openrouter.ai/api/v1/videos/generation?id=${jobId}`, {
+        headers: { 'Authorization': `Bearer ${key}` }
+      });
+      if (!pollRes.ok) continue;
+      const pollData = await pollRes.json();
+      
+      const status = pollData.status || pollData.data?.status;
+      const url = pollData.url || pollData.data?.url || pollData.data?.video_url;
+      
+      if (status === 'completed' || status === 'succeeded' || url) {
+        if (!url) throw new Error('Video selesai tapi URL kosong.');
+        return { content: `![Generated Video](${url})`, model };
+      }
+      if (status === 'failed' || status === 'error') {
+        throw new Error('Render video gagal di server.');
+      }
+    }
+    throw new Error('Timeout: Render video memakan waktu lebih dari 5 menit.');
+  };
+
   // ── Auto Analysis ──
   const triggerAutoAnalysis = async (symbol: string) => {
-    if (chatMode !== 'trading') handleToggleMode('trading');
     setBusy(true);
     const userMsg: UiMessage = { id: `u_${Date.now()}`, role: 'user', content: `Analisis Otomatis ${symbol} (Top-Down MTF H4 → M15 → M5)`, timestamp: getFormattedTime() };
     const curMsgs = activeSession ? [...activeSession.messages, userMsg] : [userMsg];
+    // FIX: previously this also called handleToggleMode('trading') right
+    // before this save, which raced against it (both computed from the same
+    // stale `sessions` snapshot and could clobber each other). Setting
+    // mode: 'trading' directly here removes the race and the redundant save.
     saveSessions(sessions.map(s => s.id === currentSessionId ? { ...s, title: `Analisa ${symbol}`, mode: 'trading', messages: curMsgs } : s));
     try {
       const d = await fetchLiveMarketData(symbol);
       if (!d) throw new Error('Gagal tarik data live.');
       const prompt = `[DATA LIVE BINANCE]: ${d.symbol} $${d.price} (${d.change24h > 0 ? '+' : ''}${d.change24h.toFixed(2)}%) | H4: ${d.h4.trend} | M15 RSI: ${d.m15.rsi} Vol: ${d.m15.volRatio}x | M5: ${d.m5.candle} RSI: ${d.m5.rsi}${d.btcWeather ? ` | BTC: $${d.btcWeather.price.toFixed(0)} (${d.btcWeather.status})` : ''}\n\nLakukan analisis trading Neurobro: Bias H4, Setup M15, Entry M5, R:R >= 1:2, Batas Batal.`;
-      const result = await callOpenRouter(curMsgs, prompt, 'trading', mode);
+      const result = await callOpenRouter(curMsgs, prompt, 'trading');
       const aMsg: UiMessage = { id: `a_${Date.now()}`, role: 'assistant', content: result.content, modelUsed: result.model.split('/').pop(), timestamp: getFormattedTime() };
-      saveSessions(sessions.map(s => s.id === currentSessionId ? { ...s, messages: [...curMsgs, aMsg] } : s));
+      // FIX: functional update — append to whatever the session's messages
+      // are *now*, not the `curMsgs` snapshot taken before the network call.
+      saveSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, aMsg] } : s));
     } catch (err: any) {
       const eMsg: UiMessage = { id: `e_${Date.now()}`, role: 'assistant', content: `Kendala: ${err?.message || 'Gagal.'}`, modelUsed: 'Error', timestamp: getFormattedTime() };
-      saveSessions(sessions.map(s => s.id === currentSessionId ? { ...s, messages: [...curMsgs, eMsg] } : s));
+      saveSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, eMsg] } : s));
     } finally { setBusy(false); }
   };
 
@@ -535,22 +806,75 @@ export default function App() {
     const trimmed = input.trim();
     if (!trimmed && !attachment) return;
     if (busy) return;
-    const match = trimmed.toUpperCase().match(/\b(BTC|ETH|SOL|BNB|XAU|EUR)(USDT)?\b/);
-    if (chatMode === 'trading' && match && !attachment) { const sym = match[1] === 'EUR' ? 'EURUSDT' : `${match[1]}USDT`; setInput(''); await triggerAutoAnalysis(sym); return; }
-    setBusy(true);
-    const userMsg: UiMessage = { id: `u_${Date.now()}`, role: 'user', content: trimmed, imageUri: attachment?.uri, timestamp: getFormattedTime() };
+    
+    // Auto Analysis Check
+    const analysisMatch = chatMode === 'trading' && !attachment
+      ? trimmed.toUpperCase().match(/^(?:ANALISA|ANALISIS|CEK)?\s*(BTC|ETH|SOL|BNB|XAU|EUR)(USDT)?\s*$/)
+      : null;
+    if (analysisMatch) {
+      const sym = analysisMatch[1] === 'EUR' ? 'EURUSDT' : `${analysisMatch[1]}USDT`;
+      setInput('');
+      await triggerAutoAnalysis(sym);
+      return;
+    }
+
+    // Prepare message
+    const isVideo = trimmed.startsWith('/video ');
+    const userContent = isVideo ? trimmed.slice(7).trim() : trimmed;
+
+    const userMsg: UiMessage = { id: `u_${Date.now()}`, role: 'user', content: userContent, attachment: attachment || undefined, timestamp: getFormattedTime() };
     const curMsgs = activeSession ? [...activeSession.messages, userMsg] : [userMsg];
-    const title = activeSession?.title === 'Percakapan Baru' ? trimmed.slice(0, 36) + (trimmed.length > 36 ? '…' : '') : activeSession?.title || 'Obrolan';
-    saveSessions(sessions.map(s => s.id === currentSessionId ? { ...s, title, messages: curMsgs } : s));
-    const curAttach = attachment; setInput(''); setAttachment(null);
+    const targetSessionId = activeSession ? activeSession.id : `session_${Date.now()}`;
+    const newTitle = activeSession?.title === 'Percakapan Baru' || !activeSession ? userContent.slice(0, 36) + (userContent.length > 36 ? '…' : '') : activeSession?.title || 'Obrolan';
+
+    saveSessions(
+      sessions.length === 0 ? [{ id: targetSessionId, title: newTitle, createdAt: Date.now(), updatedAt: Date.now(), mode: chatMode, messages: curMsgs, pinned: false }]
+        : sessions.map(s => s.id === targetSessionId ? { ...s, messages: curMsgs, title: newTitle } : s),
+      targetSessionId
+    );
+    setCurrentSessionId(targetSessionId);
+    setInput(''); setAttachment(null);
+    const textarea = document.querySelector('.chat-input-area textarea') as HTMLTextAreaElement;
+    if (textarea) textarea.style.height = 'auto';
+    setBusy(true);
+
+    // Fake loading message for Heavy generation
+    const currentModelObj = availableModels.find(m => m.id === selectedModel);
+    const isVideoModel = currentModelObj?.outputModalities.includes('video') || isVideo;
+    const isImageModel = currentModelObj?.outputModalities.includes('image') && !currentModelObj.outputModalities.includes('text');
+    const isAudioModel = currentModelObj?.outputModalities.includes('audio');
+
+    if (isVideoModel) {
+      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎬 *Sedang merender video (Mohon tunggu, ini dapat memakan waktu beberapa menit)...*', modelUsed: selectedModel, timestamp: getFormattedTime() };
+      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, waitMsg] } : s));
+    } else if (isImageModel) {
+      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎨 *Sedang menggambar...*', modelUsed: selectedModel, timestamp: getFormattedTime() };
+      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, waitMsg] } : s));
+    } else if (isAudioModel) {
+      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎙️ *Sedang mensintesis suara...*', modelUsed: selectedModel, timestamp: getFormattedTime() };
+      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, waitMsg] } : s));
+    }
+
     try {
-      const result = await callOpenRouter(curMsgs, trimmed, chatMode, mode, curAttach);
+      let result;
+      if (isVideoModel) {
+        result = await callOpenRouterVideoGen(userContent, selectedModel);
+      } else if (isImageModel || trimmed.startsWith('/imagine ')) {
+        result = await callOpenRouterImageGen(trimmed.startsWith('/imagine ') ? trimmed.slice(9).trim() : trimmed);
+      } else if (isAudioModel) {
+        result = await callOpenRouterSpeechGen(userContent, selectedModel);
+      } else {
+        result = await callOpenRouter(curMsgs, trimmed, chatMode);
+      }
       const aMsg: UiMessage = { id: `a_${Date.now()}`, role: 'assistant', content: result.content, modelUsed: result.model.split('/').pop(), timestamp: getFormattedTime() };
-      saveSessions(sessions.map(s => s.id === currentSessionId ? { ...s, messages: [...curMsgs, aMsg] } : s));
+      
+      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: isVideoModel || isImageModel || isAudioModel ? [...s.messages.filter(m => !m.id.startsWith('wait_')), aMsg] : [...s.messages, aMsg] } : s));
     } catch (err: any) {
-      const eMsg: UiMessage = { id: `e_${Date.now()}`, role: 'assistant', content: `Kendala: ${err?.message || 'Gagal.'}`, modelUsed: 'Error', timestamp: getFormattedTime() };
-      saveSessions(sessions.map(s => s.id === currentSessionId ? { ...s, messages: [...curMsgs, eMsg] } : s));
-    } finally { setBusy(false); }
+      const eMsg: UiMessage = { id: `e_${Date.now()}`, role: 'assistant', content: `Maaf, terjadi kesalahan: ${err?.message || 'Gagal terhubung ke AI.'}`, modelUsed: 'Error', timestamp: getFormattedTime() };
+      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: isVideoModel || isImageModel || isAudioModel ? [...s.messages.filter(m => !m.id.startsWith('wait_')), eMsg] : [...s.messages, eMsg] } : s));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const loadQuotas = async () => {
@@ -580,7 +904,7 @@ export default function App() {
       {/* ════════ SIDEBAR ════════ */}
       <aside className={`sidebar ${sidebarMini ? 'mini' : ''} ${sidebarOpen ? 'open' : ''}`}>
         {/* Brand Row */}
-        <div className="sidebar-brand-row" onClick={() => { if (window.innerWidth <= 768) setSidebarOpen(!sidebarOpen); else setSidebarMini(!sidebarMini); }} style={{ cursor: 'pointer' }} title={sidebarMini ? 'Buka Sidebar' : 'Tutup Sidebar'}>
+        <div className="sidebar-brand-row" onClick={() => { if (isMobile) setSidebarOpen(!sidebarOpen); else setSidebarMini(!sidebarMini); }} style={{ cursor: 'pointer' }} title={sidebarMini ? 'Buka Sidebar' : 'Tutup Sidebar'}>
           <div className="brand-logo-group">
             <div className="brand-emblem">
               <span className="emblem-logo">{Icons.nova}</span>
@@ -605,6 +929,7 @@ export default function App() {
           {Icons.plus} Chat Baru
         </button>
 
+
         <div className="sidebar-section-title">Mode</div>
         <div className="mode-switcher-capsule">
           <button className={`mode-switcher-tab ${chatMode === 'general' ? 'active' : ''}`} onClick={() => handleToggleMode('general')}>
@@ -621,7 +946,6 @@ export default function App() {
           </button>
           <button className="sidebar-nav-item" onClick={() => setShowSopModal(true)}>{Icons.bookOpen} Pedoman (SOP)</button>
           <button className="sidebar-nav-item" onClick={loadQuotas}>{Icons.zap} Status Kuota</button>
-          <button className="sidebar-nav-item" onClick={() => setShowModelModal(true)}>{Icons.settings} Model ({mode.toUpperCase()})</button>
         </div>
 
         <div className="sidebar-history-header">
@@ -673,15 +997,120 @@ export default function App() {
       {/* ════════ MAIN ARENA ════════ */}
       <main className="main-arena">
         <header className="main-header">
-          <div className="main-header-left">
-            {window.innerWidth <= 768 && (
+          <div className="main-header-left" style={{ flex: 1 }}>
+            {isMobile && (
               <button className="header-btn" onClick={() => setSidebarOpen(!sidebarOpen)} style={{ padding: '6px 8px' }}>{Icons.nova}</button>
             )}
             <div className="header-mode-badge">
+              <div className="status-dot" />
               {chatMode === 'trading' ? 'NOVA Neurobro' : 'NOVA AI'}
             </div>
           </div>
-          <div className="main-header-right">
+
+          <div style={{ flex: 1, display: 'flex', justifyContent: 'center', position: 'relative' }}>
+            <button 
+              style={{ background: 'var(--bg-panel-raised)', border: '1px solid var(--hairline)', borderRadius: '20px', padding: '6px 14px', fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all var(--transition-fast)' }}
+              onClick={(e) => { e.stopPropagation(); setIsModelDropdownOpen(!isModelDropdownOpen); }}
+              onMouseOver={(e) => e.currentTarget.style.borderColor = 'var(--hairline-strong)'}
+              onMouseOut={(e) => e.currentTarget.style.borderColor = 'var(--hairline)'}
+            >
+              {Icons.cpu}
+              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
+                {availableModels.find(m => m.id === selectedModel)?.name || selectedModel.split('/').pop() || 'Loading Models...'}
+              </span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isModelDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.6 }}>
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+
+            {isModelDropdownOpen && (
+              <div className="model-dropdown-menu" style={{ position: 'absolute', top: 'calc(100% + 12px)', left: '50%', transform: 'translateX(-50%)', zIndex: 100, background: 'var(--glass-bg-strong)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid var(--glass-border)', borderRadius: '16px', maxHeight: '500px', width: '340px', overflowY: 'auto', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column' }}>
+                <div className="model-dropdown-header" style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', position: 'sticky', top: 0, background: 'transparent', zIndex: 10, backdropFilter: 'blur(24px)' }}>
+                  <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>Omnimodal Models</span>
+                    <span style={{color: 'var(--text-muted)', fontWeight: 500, fontSize: '12px'}}>{availableModels.length} Total</span>
+                  </div>
+                  
+                  {/* Modality Tabs */}
+                  <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
+                    {['all', 'text', 'image', 'video', 'audio'].map(tab => {
+                      let count = availableModels.length;
+                      if (tab !== 'all') {
+                        count = availableModels.filter(m => {
+                          if (tab === 'audio') return m.outputModalities.includes('audio') || m.outputModalities.includes('speech');
+                          return m.outputModalities.includes(tab);
+                        }).length;
+                      }
+                      
+                      return (
+                        <button key={tab} className={`model-tab-btn ${modelTab === tab ? 'active' : ''}`} onClick={(e) => { e.stopPropagation(); setModelTab(tab as any); }}>
+                          {tab.charAt(0).toUpperCase() + tab.slice(1)} {count > 0 && <span className="tab-count">{count}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {availableModels.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Mencari model...</div>
+                ) : (
+                  availableModels.filter(m => {
+                    if (modelTab === 'all') return true;
+                    if (modelTab === 'audio') return m.outputModalities.includes('audio') || m.outputModalities.includes('speech');
+                    return m.outputModalities.includes(modelTab);
+                  }).map(m => {
+                    const isFree = m.pricing.prompt === '0' || m.pricing.prompt === '0.0';
+                    
+                    const formatPrice = (p: string) => {
+                      const num = parseFloat(p);
+                      if (isNaN(num) || num === 0) return 'FREE';
+                      return '$' + (num * 1000000).toLocaleString(undefined, { maximumFractionDigits: 3 });
+                    };
+                    
+                    const pInput = formatPrice(m.pricing.prompt);
+                    const pOutput = formatPrice(m.pricing.completion);
+                    
+                    const formatCtx = (ctx: number) => {
+                      if (!ctx) return '?';
+                      if (ctx >= 1000000) return (ctx / 1000000).toFixed(1).replace('.0', '') + 'M';
+                      if (ctx >= 1000) return (ctx / 1000).toFixed(0) + 'K';
+                      return ctx.toString();
+                    };
+
+                    return (
+                      <button
+                        key={m.id}
+                        className={`model-card-item ${selectedModel === m.id ? 'active' : ''}`}
+                        onClick={() => { setSelectedModel(m.id); setIsModelDropdownOpen(false); }}
+                      >
+                        <div className="model-card-title-row">
+                          <span className="model-card-title">{m.name}</span>
+                          {isFree && <span className="model-free-badge">🎁 FREE</span>}
+                        </div>
+                        <div className="model-card-id">{m.id}</div>
+                        
+                        <div className="model-card-badges">
+                          {m.outputModalities.map((mod, i) => (
+                            <span key={i} className={`modality-badge mod-${mod}`}>{mod.toUpperCase()}</span>
+                          ))}
+                          {m.contextLength > 0 && (
+                            <span className="context-badge">{Icons.panel} {formatCtx(m.contextLength)} context</span>
+                          )}
+                        </div>
+
+                        <div className="model-card-pricing">
+                          <div><span style={{color: 'var(--text-muted)'}}>In:</span> {pInput} {pInput !== 'FREE' && '/ 1M'}</div>
+                          <div><span style={{color: 'var(--text-muted)'}}>Out:</span> {pOutput} {pOutput !== 'FREE' && '/ 1M'}</div>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="main-header-right" style={{ flex: 1, justifyContent: 'flex-end' }}>
             <button className={`header-btn ${showChartPanel ? 'active-chart' : ''}`} onClick={() => setShowChartPanel(!showChartPanel)}>
               {Icons.barChart} {showChartPanel ? 'Tutup' : 'Chart'}
             </button>
@@ -715,7 +1144,13 @@ export default function App() {
               {m.role === 'assistant' && <div className="assistant-avatar-circle">{Icons.nova}</div>}
               {m.role === 'user' && <div className="user-avatar-circle">U</div>}
               <div className="message-card">
-                {m.imageUri && <div className="attached-image-container"><img src={m.imageUri} alt="Attached" /></div>}
+                {m.attachment && (
+                  <div className="attached-media-container">
+                    {m.attachment.type === 'image' && <img src={m.attachment.uri} alt="Attached" style={{ maxWidth: '340px', borderRadius: '8px' }} />}
+                    {m.attachment.type === 'video' && <video src={m.attachment.uri} controls style={{ maxWidth: '340px', borderRadius: '8px', background: '#000' }} />}
+                    {m.attachment.type === 'audio' && <audio src={m.attachment.uri} controls style={{ width: '100%', maxWidth: '340px' }} />}
+                  </div>
+                )}
                 {m.role === 'assistant' ? <MarkdownContent content={m.content} /> : <div className="message-body user-body">{m.content}</div>}
                 {m.role === 'assistant' && (
                   <div className="message-actions-row">
@@ -725,6 +1160,7 @@ export default function App() {
                     <button className="message-action-pill" onClick={() => handleCopy(m.id, m.content)}>
                       {copiedId === m.id ? Icons.check : Icons.copy} {copiedId === m.id ? 'Tersalin' : 'Salin'}
                     </button>
+                    {m.modelUsed && <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8 }}>via {m.modelUsed}</span>}
                   </div>
                 )}
               </div>
@@ -746,24 +1182,26 @@ export default function App() {
         <footer className="composer-dock">
           {attachment && (
             <div className="attachment-preview-capsule">
-              <img src={attachment.uri} alt="Thumb" className="attachment-thumb" />
+              {attachment.type === 'image' && <img src={attachment.uri} alt="Thumb" className="attachment-thumb" />}
+              {attachment.type === 'video' && <div className="attachment-thumb" style={{ background: '#000', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.film}</div>}
+              {attachment.type === 'audio' && <div className="attachment-thumb" style={{ background: 'var(--surface-3)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mic}</div>}
               <div className="attachment-info">
                 <div className="attachment-name">{attachment.name}</div>
-                <div className="attachment-hint">{Icons.check} Siap dianalisis</div>
+                <div className="attachment-hint">{Icons.check} {attachment.type.toUpperCase()} siap dianalisis</div>
               </div>
               <button className="attachment-close-btn" onClick={() => setAttachment(null)}>{Icons.x}</button>
             </div>
           )}
           <div className="composer-box">
-            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*" onChange={handleFileChange} />
-            <button className="composer-icon-btn" onClick={() => fileInputRef.current?.click()} title="Unggah Gambar">{Icons.camera}</button>
-            <button className={`composer-icon-btn ${isListening ? 'active-mic' : ''}`} onClick={handleToggleVoiceInput} title="Input Suara">{Icons.mic}</button>
-            <textarea className="composer-textarea" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} placeholder={chatMode === 'trading' ? 'Ketik "Analisa BTC" atau tanyakan setup…' : 'Ketik pesan untuk NOVA…'} rows={1} />
+            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*,video/*,audio/*" onChange={handleFileChange} />
+            <button className="composer-icon-btn" onClick={() => fileInputRef.current?.click()} title="Unggah Media">{Icons.paperclip}</button>
+            <button className={`composer-icon-btn ${isRecordingAudio ? 'active-mic' : ''}`} onClick={handleToggleVoiceRecord} title="Rekam Audio">{Icons.mic}</button>
+            <textarea className="composer-textarea" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} placeholder={chatMode === 'trading' ? 'Ketik "Analisa BTC" atau tanyakan setup…' : 'Ketik pesan atau /imagine untuk generate gambar…'} rows={1} />
             <button className="composer-send-btn" onClick={handleSend} disabled={busy || (!input.trim() && !attachment)}>
               {Icons.send} Kirim
             </button>
           </div>
-          <div className="composer-hint">Tekan Enter untuk mengirim · Shift+Enter baris baru</div>
+          <div className="composer-hint">Tekan Enter untuk mengirim · Awali prompt dengan /imagine untuk buat gambar</div>
         </footer>
       </main>
 
@@ -828,22 +1266,6 @@ export default function App() {
                 </div>
               ))}
               <button className="btn-new-chat-full" onClick={loadQuotas} style={{ margin: '8px 0 0' }}>{Icons.refresh} Segarkan</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showModelModal && (
-        <div className="modal-overlay" onClick={() => setShowModelModal(false)}>
-          <div className="modal-dialog" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
-            <div className="modal-header"><div><div className="modal-title">Pilih Model AI</div></div><button className="modal-close-btn" onClick={() => setShowModelModal(false)}>{Icons.x}</button></div>
-            <div className="modal-body">
-              {([{ id: 'max' as AgentMode, title: 'Flagship (MAX)', desc: 'Penalaran mendalam & chart tingkat lanjut.', icon: Icons.cpu }, { id: 'fast' as AgentMode, title: 'High-Speed (FAST)', desc: 'Respon kilat untuk percakapan harian.', icon: Icons.zap }, { id: 'auto' as AgentMode, title: 'Dynamic (AUTO)', desc: 'Otomatis pilih model terbaik.', icon: Icons.refresh }]).map(item => (
-                <div key={item.id} className={`quota-key-box ${mode === item.id ? 'active' : ''}`} onClick={() => { setMode(item.id); setShowModelModal(false); }} style={{ cursor: 'pointer' }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: mode === item.id ? 'var(--accent-primary-hover)' : 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 7 }}>{item.icon} {item.title} {mode === item.id && Icons.check}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 4 }}>{item.desc}</div>
-                </div>
-              ))}
             </div>
           </div>
         </div>
