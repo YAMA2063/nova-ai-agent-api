@@ -705,14 +705,14 @@ export default function App() {
     throw lastErr || new Error('Gagal menghubungi OpenRouter.');
   };
 
-  const callOpenRouterImageGen = async (prompt: string) => {
+  const callOpenRouterImageGen = async (prompt: string, model: string) => {
     let lastErr: any = null;
     for (const key of getOpenRouterKeys()) {
       try {
         const res = await fetch('https://openrouter.ai/api/v1/images/generations', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, model: IMAGE_MODEL, response_format: 'url' })
+          body: JSON.stringify({ prompt, model, response_format: 'url' })
         });
         if (!res.ok) {
            if (res.status === 401 || res.status === 402) lastErr = new Error(`HTTP ${res.status}: API Key tidak valid atau kuota habis.`);
@@ -722,7 +722,7 @@ export default function App() {
         const data = await res.json();
         const url = data.data?.[0]?.url;
         if (!url) { lastErr = new Error('URL Gambar kosong dari API.'); break; }
-        return { content: `![Generated Image](${url})`, model: IMAGE_MODEL };
+        return { content: `![Generated Image](${url})`, model };
       } catch (e: any) { lastErr = e; }
     }
     throw lastErr || new Error('Image generation gagal. Periksa koneksi atau API Key Anda.');
@@ -900,7 +900,7 @@ export default function App() {
       if (isVideoModel) {
         result = await callOpenRouterVideoGen(userContent, finalModel);
       } else if (isImageModel) {
-        result = await callOpenRouterImageGen(userContent);
+        result = await callOpenRouterImageGen(userContent, finalModel);
       } else if (isAudioModel) {
         result = await callOpenRouterSpeechGen(userContent, finalModel);
       } else {
