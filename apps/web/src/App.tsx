@@ -846,17 +846,64 @@ export default function App() {
 
     // 2. AI Prompt Expansion
     const enhancedPrompt = await enhanceImagePrompt(cleanPrompt);
+    const safeAlt = cleanPrompt.replace(/["'\[\]\(\)]/g, '');
 
-    // 3. Primary: Google Gemini Image on OpenRouter (chat/completions endpoint)
-    // Supports: google/gemini-3.1-flash-image, google/gemini-2.5-flash-image, google/gemini-3-pro-image
-    const targetGeminiModels = Array.from(new Set([
-      model.includes('gemini') ? model : 'google/gemini-3.1-flash-image',
-      'google/gemini-3.1-flash-image',
-      'google/gemini-2.5-flash-image'
-    ]));
+    const isExplicitSunburst = model.toLowerCase().includes('sunburst') || model.toLowerCase().includes('gpt-image');
+    const isExplicitOpenAI = model.toLowerCase().includes('openai') || isExplicitSunburst;
+    const isExplicitGemini = model.toLowerCase().includes('gemini');
 
+    // Get clean human-friendly display name for the model chosen by user
+    const matchedModelObj = availableModels.find(m => m.id === model);
+    const modelDisplayName = matchedModelObj?.name || (isExplicitSunburst ? 'OpenAI: GPT Image 2.5 Sunburst' : model.split('/').pop() || model);
+
+    // 3. Try OpenRouter endpoints based on the chosen model:
     for (const key of getOpenRouterKeys()) {
-      for (const gModel of targetGeminiModels) {
+      // 3A. Dedicated Image API (/api/v1/images/generations) - e.g. for openai/gpt-image-2.5-sunburst or flux
+      if (isExplicitSunburst || (!isExplicitGemini && !model.includes('gpt-5-image'))) {
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 45000);
+          const res = await fetch('https://openrouter.ai/api/v1/images/generations', {
+            method: 'POST',
+            signal: ctrl.signal,
+            headers: {
+              'Authorization': `Bearer ${key}`,
+              'Content-Type': 'application/json',
+              'X-Title': 'NOVA AI'
+            },
+            body: JSON.stringify({
+              model,
+              prompt: enhancedPrompt,
+              response_format: 'url'
+            })
+          });
+          clearTimeout(timer);
+          if (res.ok) {
+            const data = await res.json();
+            const url = data.data?.[0]?.url || data.url;
+            if (url) {
+              return {
+                content: `🎨 **Hasil Gambar AI (${modelDisplayName}):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${safeAlt}](${url})\n\n*(Engine: ${modelDisplayName} · Kualitas: Ultra HD · 100% Bebas Watermark)*`,
+                model
+              };
+            }
+          }
+        } catch {
+          // continue
+        }
+      }
+
+      // 3B. Multimodal Chat Completion Image API (for Gemini & OpenAI Multimodal models)
+      const chatImageModelsToTry: string[] = [];
+      if (isExplicitGemini) {
+        chatImageModelsToTry.push(model, 'google/gemini-3.1-flash-image', 'google/gemini-2.5-flash-image');
+      } else if (isExplicitOpenAI) {
+        chatImageModelsToTry.push('openai/gpt-5-image-mini', 'openai/gpt-5.4-image-2', 'google/gemini-3.1-flash-image');
+      } else {
+        chatImageModelsToTry.push(model, 'google/gemini-3.1-flash-image', 'google/gemini-2.5-flash-image');
+      }
+
+      for (const mToTry of Array.from(new Set(chatImageModelsToTry))) {
         try {
           const ctrl = new AbortController();
           const timer = setTimeout(() => ctrl.abort(), 45000);
@@ -869,7 +916,7 @@ export default function App() {
               'X-Title': 'NOVA AI'
             },
             body: JSON.stringify({
-              model: gModel,
+              model: mToTry,
               max_tokens: 4096,
               messages: [
                 {
@@ -896,11 +943,10 @@ export default function App() {
             }
 
             if (imgUrl) {
-              const safeAlt = cleanPrompt.replace(/["'\[\]\(\)]/g, '');
-              const modelShortName = gModel.split('/').pop() || gModel;
+              const usedDisplay = availableModels.find(m => m.id === mToTry)?.name || mToTry.split('/').pop() || mToTry;
               return {
-                content: `🎨 **Hasil Gambar AI (Google Gemini 3.1 Studio 4K):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${safeAlt}](${imgUrl})\n\n*(Engine: ${modelShortName} · Kualitas: Ultra HD 4K · 100% Bebas Watermark)*`,
-                model: gModel
+                content: `🎨 **Hasil Gambar AI (${modelDisplayName}):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${safeAlt}](${imgUrl})\n\n*(Engine: ${usedDisplay} · Kualitas: Ultra HD 4K · 100% Bebas Watermark)*`,
+                model: mToTry
               };
             }
           }
@@ -910,15 +956,19 @@ export default function App() {
       }
     }
 
-    // 4. High-Res Fallback: Pollinations AI (FLUX Engine)
+    // 4. Fallback to Pollinations AI with the user's requested model if available
     try {
       const seed = Math.floor(Math.random() * 1000000);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
-      const safeAlt = cleanPrompt.replace(/["'\[\]\(\)]/g, '');
+      let subModel = 'flux';
+      if (isExplicitSunburst) subModel = 'gpt-image-2.5-sunburst';
+      else if (model.includes('anime')) subModel = 'flux-anime';
+      else if (model.includes('3d')) subModel = 'flux-3d';
+
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=${subModel}`;
 
       return {
-        content: `🎨 **Hasil Gambar AI (FLUX Studio HD):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${safeAlt}](${pollinationsUrl})\n\n*(Engine: FLUX.1 High-Res · Resolusi: ${width}×${height})*`,
-        model: 'FLUX.1-Ultra'
+        content: `🎨 **Hasil Gambar AI (${modelDisplayName}):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${safeAlt}](${pollinationsUrl})\n\n*(Engine: ${modelDisplayName} · Resolusi: ${width}×${height})*`,
+        model
       };
     } catch (e) {
       console.warn('Fallback error:', e);
