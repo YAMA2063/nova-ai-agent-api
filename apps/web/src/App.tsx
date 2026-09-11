@@ -690,7 +690,11 @@ export default function App() {
         const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 60000); // 60s for video
         const res = await fetch('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', signal: ctrl.signal, headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'NOVA Web' }, body: JSON.stringify({ model: selectedModel, temperature: cMode === 'trading' ? 0.15 : 0.4, max_tokens: 2500, messages: msgs }) });
         clearTimeout(timer);
-        if (!res.ok) { lastErr = new Error(`HTTP ${res.status}`); continue; }
+        if (!res.ok) { 
+          if (res.status === 401 || res.status === 402) lastErr = new Error(`HTTP ${res.status}: API Key tidak valid atau kuota habis.`);
+          else lastErr = new Error(`HTTP ${res.status}`); 
+          continue; 
+        }
         const data = await res.json();
         if (data.error) { lastErr = new Error(data.error?.message || 'Provider error'); break; }
         const reply = data.choices?.[0]?.message?.content;
@@ -816,9 +820,30 @@ export default function App() {
       return;
     }
 
-    // Prepare message
+    // Smart Intent Detection for Image Generation
+    const imageIntentMatch = trimmed.match(/^(?:buatkan|buat|bikin|generate|tolong buatkan)\s+(?:gambar|image|foto|lukisan|ilustrasi)\s+(.+)/i);
     const isVideo = trimmed.startsWith('/video ');
-    const userContent = isVideo ? trimmed.slice(7).trim() : trimmed;
+    let finalModel = selectedModel;
+    let isImageIntent = trimmed.startsWith('/imagine ');
+    let userContent = trimmed;
+
+    if (imageIntentMatch && !isImageIntent) {
+      isImageIntent = true;
+      userContent = imageIntentMatch[1].trim(); // Extract the actual prompt
+      // Auto-switch to default image model if current is not image
+      const curr = availableModels.find(m => m.id === selectedModel);
+      if (!curr?.outputModalities.includes('image')) {
+        finalModel = IMAGE_MODEL;
+      }
+    } else if (isImageIntent) {
+      userContent = trimmed.slice(9).trim();
+      const curr = availableModels.find(m => m.id === selectedModel);
+      if (!curr?.outputModalities.includes('image')) {
+        finalModel = IMAGE_MODEL;
+      }
+    } else if (isVideo) {
+      userContent = trimmed.slice(7).trim();
+    }
 
     const userMsg: UiMessage = { id: `u_${Date.now()}`, role: 'user', content: userContent, attachment: attachment || undefined, timestamp: getFormattedTime() };
     const curMsgs = activeSession ? [...activeSession.messages, userMsg] : [userMsg];
@@ -837,16 +862,16 @@ export default function App() {
     setBusy(true);
 
     // Fake loading message for Heavy generation
-    const currentModelObj = availableModels.find(m => m.id === selectedModel);
+    const currentModelObj = availableModels.find(m => m.id === finalModel);
     const isVideoModel = currentModelObj?.outputModalities.includes('video') || isVideo;
-    const isImageModel = currentModelObj?.outputModalities.includes('image') && !currentModelObj.outputModalities.includes('text');
+    const isImageModel = (currentModelObj?.outputModalities.includes('image') && !currentModelObj.outputModalities.includes('text')) || isImageIntent;
     const isAudioModel = currentModelObj?.outputModalities.includes('audio');
 
     if (isVideoModel) {
-      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎬 *Sedang merender video (Mohon tunggu, ini dapat memakan waktu beberapa menit)...*', modelUsed: selectedModel, timestamp: getFormattedTime() };
+      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎬 *Sedang merender video (Mohon tunggu, ini dapat memakan waktu beberapa menit)...*', modelUsed: finalModel, timestamp: getFormattedTime() };
       saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, waitMsg] } : s));
     } else if (isImageModel) {
-      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎨 *Sedang menggambar...*', modelUsed: selectedModel, timestamp: getFormattedTime() };
+      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎨 *Sedang menggambar...*', modelUsed: finalModel, timestamp: getFormattedTime() };
       saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, waitMsg] } : s));
     } else if (isAudioModel) {
       const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎙️ *Sedang mensintesis suara...*', modelUsed: selectedModel, timestamp: getFormattedTime() };
@@ -856,13 +881,14 @@ export default function App() {
     try {
       let result;
       if (isVideoModel) {
-        result = await callOpenRouterVideoGen(userContent, selectedModel);
-      } else if (isImageModel || trimmed.startsWith('/imagine ')) {
-        result = await callOpenRouterImageGen(trimmed.startsWith('/imagine ') ? trimmed.slice(9).trim() : trimmed);
+        result = await callOpenRouterVideoGen(userContent, finalModel);
+      } else if (isImageModel) {
+        result = await callOpenRouterImageGen(userContent);
       } else if (isAudioModel) {
-        result = await callOpenRouterSpeechGen(userContent, selectedModel);
+        result = await callOpenRouterSpeechGen(userContent, finalModel);
       } else {
-        result = await callOpenRouter(curMsgs, trimmed, chatMode);
+        // Text model
+        result = await callOpenRouter(curMsgs, userContent, chatMode);
       }
       const aMsg: UiMessage = { id: `a_${Date.now()}`, role: 'assistant', content: result.content, modelUsed: result.model.split('/').pop(), timestamp: getFormattedTime() };
       
@@ -1067,15 +1093,39 @@ export default function App() {
                   <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
                     {['all', 'text', 'image', 'video', 'audio'].map(tab => {
                       let count = availableModels.length;
+                      let filteredModels = availableModels;
+                      
                       if (tab !== 'all') {
-                        count = availableModels.filter(m => {
+                        filteredModels = availableModels.filter(m => {
                           if (tab === 'audio') return m.outputModalities.includes('audio') || m.outputModalities.includes('speech');
                           return m.outputModalities.includes(tab);
-                        }).length;
+                        });
+                        count = filteredModels.length;
                       }
                       
                       return (
-                        <button key={tab} className={`model-tab-btn ${modelTab === tab ? 'active' : ''}`} onClick={(e) => { e.stopPropagation(); setModelTab(tab as any); }}>
+                        <button 
+                          key={tab} 
+                          className={`model-tab-btn ${modelTab === tab ? 'active' : ''}`} 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setModelTab(tab as any);
+                            // Auto switch model when tab changes
+                            if (filteredModels.length > 0) {
+                              const newTopModel = filteredModels.sort((a, b) => {
+                                if (modelSort === 'newest') return b.created - a.created;
+                                if (modelSort === 'oldest') return a.created - b.created;
+                                if (modelSort === 'weekly') {
+                                   const scoreA = (a.contextLength || 1) / (parseFloat(a.pricing.prompt) || 0.1);
+                                   const scoreB = (b.contextLength || 1) / (parseFloat(b.pricing.prompt) || 0.1);
+                                   return scoreB - scoreA;
+                                }
+                                return 0;
+                              })[0];
+                              setSelectedModel(newTopModel.id);
+                            }
+                          }}
+                        >
                           {tab.charAt(0).toUpperCase() + tab.slice(1)} {count > 0 && <span className="tab-count">{count}</span>}
                         </button>
                       );
