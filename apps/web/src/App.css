@@ -1181,6 +1181,12 @@
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
 }
 
+/* Seamless watermark removal for external AI generated media */
+.message-body img[src*="pollinations.ai"] {
+  clip-path: inset(0 0 44px 0 round 12px);
+  margin-bottom: -36px;
+}
+
 .message-body video {
   max-width: 100%;
   max-height: 480px;

@@ -503,10 +503,19 @@ export default function App() {
   ) => {
     setSessions(prev => {
       const updated = typeof updater === 'function' ? (updater as (p: ChatSession[]) => ChatSession[])(prev) : updater;
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(updated));
+      try {
+        localStorage.setItem(SESSIONS_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('LocalStorage quota warning', e);
+      }
       return updated;
     });
-    if (activeId) { setCurrentSessionId(activeId); localStorage.setItem(ACTIVE_SESSION_KEY, activeId); }
+    if (activeId) {
+      setCurrentSessionId(activeId);
+      try {
+        localStorage.setItem(ACTIVE_SESSION_KEY, activeId);
+      } catch {}
+    }
   };
 
   // Sorted sessions: pinned first
@@ -768,8 +777,46 @@ export default function App() {
 
       const check = await fetch(pollinationsUrl, { method: 'HEAD' });
       if (check.ok) {
+        // Automatically crop the bottom watermark using in-browser Canvas
+        let finalUrl = pollinationsUrl;
+        try {
+          const cleanUrl = await new Promise<string>((resolve) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            const timer = setTimeout(() => resolve(pollinationsUrl), 5000);
+            img.onload = () => {
+              clearTimeout(timer);
+              try {
+                const canvas = document.createElement('canvas');
+                // Watermark resides in bottom ~4.5% of the image
+                const cropBottom = Math.round(img.naturalHeight * 0.048);
+                const targetH = img.naturalHeight - cropBottom;
+                canvas.width = img.naturalWidth;
+                canvas.height = targetH;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.drawImage(img, 0, 0, img.naturalWidth, targetH, 0, 0, img.naturalWidth, targetH);
+                  resolve(canvas.toDataURL('image/jpeg', 0.88));
+                } else {
+                  resolve(pollinationsUrl);
+                }
+              } catch {
+                resolve(pollinationsUrl);
+              }
+            };
+            img.onerror = () => {
+              clearTimeout(timer);
+              resolve(pollinationsUrl);
+            };
+            img.src = pollinationsUrl;
+          });
+          if (cleanUrl) finalUrl = cleanUrl;
+        } catch {
+          finalUrl = pollinationsUrl;
+        }
+
         return {
-          content: `🎨 **Hasil Gambar AI:** *"${cleanPrompt}"*\n\n![${cleanPrompt}](${pollinationsUrl})\n\n*(Model Engine: High-Res FLUX.1)*`,
+          content: `🎨 **Hasil Gambar AI:** *"${cleanPrompt}"*\n\n![${cleanPrompt}](${finalUrl})\n\n*(Model Engine: High-Res FLUX.1)*`,
           model: model ? model.split('/').pop() || model : 'FLUX.1'
         };
       }
