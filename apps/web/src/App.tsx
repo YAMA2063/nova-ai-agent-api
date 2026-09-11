@@ -276,7 +276,7 @@ Kamu adalah NOVA, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan mu
 
 ## Kapabilitas Utama:
 1. **Pembuatan Gambar AI Langsung (Image Generation)**:
-   - NOVA terintegrasi dengan generator gambar AI mutakhir (FLUX.1 High-Res & GPT Image).
+   - NOVA terintegrasi dengan generator gambar AI mutakhir (Google Gemini 3.1 Flash Image & Studio Realism).
    - Kamu BISA dan MAMPU menghasilkan gambar visual langsung di dalam obrolan!
    - Jika pengguna bertanya apakah kamu bisa membuat gambar atau gambar apa saja yang bisa kamu buat: Jelaskan dengan antusias bahwa kamu BISA membuat gambar (seperti potret fotorealistis, anime, ilustrasi 3D, pemandangan, logo, seni cyberpunk, dll.) dan ajak pengguna untuk mencobanya dengan mengetik perintah "buat gambar [deskripsi]" atau "/imagine [deskripsi]".
    - JANGAN PERNAH mengatakan bahwa kamu adalah "asisten berbasis teks yang tidak bisa membuat gambar".
@@ -289,7 +289,7 @@ Kamu adalah NOVA, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan mu
 
 const NEUROBRO_TRADING_PROMPT = `# NOVA Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
 
-const IMAGE_MODEL = 'black-forest-labs/flux-schnell';
+const IMAGE_MODEL = 'google/gemini-3.1-flash-image';
 const TTS_MODEL = 'openai/tts-1';
 
 function getFormattedTime(): string {
@@ -354,8 +354,9 @@ function MarkdownContent({ content }: { content: string }) {
     try {
       const raw = marked.parse(content || '', { breaks: true, gfm: true }) as string;
       return DOMPurify.sanitize(raw, {
-        ADD_ATTR: ['target'],
-        ADD_TAGS: ['img', 'audio', 'video']
+        ADD_ATTR: ['target', 'src', 'alt', 'class', 'loading'],
+        ADD_TAGS: ['img', 'audio', 'video'],
+        ALLOW_DATA_ATTR: true
       });
     } catch { return ''; }
   }, [content]);
@@ -749,22 +750,64 @@ export default function App() {
   };
 
   const enhanceImagePrompt = async (rawPrompt: string): Promise<string> => {
+    const lower = rawPrompt.toLowerCase();
+
+    // 1. Precise subject mapping to prevent AI hallucination (e.g. car turning into motorbike)
+    let subjectDetail = '';
+    if (/mobil\s*sport|supercar|hypercar|ferrari|lamborghini|porsche|mclaren|audi\s*r8/i.test(lower)) {
+      subjectDetail = 'A sleek aerodynamic luxury sports car, glossy metallic finish, glowing high-tech LED headlights, aggressive low-stance bodywork';
+    } else if (/mobil/i.test(lower)) {
+      subjectDetail = 'A modern luxury automobile with glossy paint and sharp realistic details';
+    } else if (/motor|motorcycle|ninja|ducati/i.test(lower)) {
+      subjectDetail = 'A high-performance sport racing motorcycle with sharp aerodynamic fairings';
+    } else if (/kucing/i.test(lower)) {
+      subjectDetail = 'An adorable fluffy cat with expressive lifelike eyes and soft detailed fur';
+    } else if (/anjing/i.test(lower)) {
+      subjectDetail = 'A beautiful dog with highly detailed fur and lifelike expression';
+    } else if (/robot|cyborg|mecha/i.test(lower)) {
+      subjectDetail = 'A futuristic humanoid robot with polished chrome and carbon-fiber armor, glowing cybernetic circuits';
+    } else if (/wanita|cewek|gadis|perempuan/i.test(lower)) {
+      subjectDetail = 'A stunningly beautiful elegant woman, photorealistic facial features, natural skin texture';
+    } else if (/pria|cowok|laki/i.test(lower)) {
+      subjectDetail = 'A handsome charismatic man, photorealistic portrait, sharp detailed features';
+    }
+
+    // 2. Precise environment and lighting mapping
+    let envDetail = '';
+    if (/malam\s*hari|malam|night/i.test(lower)) {
+      envDetail = 'parked on a rain-slicked wet asphalt street in a vibrant illuminated city at night, brilliant neon signage reflections, glowing streetlamps, moody volumetric atmospheric lighting';
+    } else if (/pagi|sunrise/i.test(lower)) {
+      envDetail = 'during early sunrise, golden hour lighting, gentle sun rays, soft morning mist';
+    } else if (/sore|sunset|senja/i.test(lower)) {
+      envDetail = 'at a breathtaking sunset, dramatic golden orange and purple twilight sky, cinematic lens flare';
+    } else if (/hujan|rain/i.test(lower)) {
+      envDetail = 'in gentle rain, glistening water droplets on surfaces, sharp wet ground reflections';
+    }
+
+    // 3. Rock-solid baseline prompt (used if LLM times out or gives poor result)
+    const basePrompt = [
+      subjectDetail || rawPrompt,
+      envDetail || 'cinematic atmospheric lighting',
+      'crystal-clear sharp focus, professional commercial photography, 85mm f/1.4 lens optics, ray-traced reflections, highly detailed textures, masterpiece, no watermarks, no blur'
+    ].filter(Boolean).join(', ');
+
+    // 4. Try fast LLM expansion (nex-agi/nex-n2.5-mini:free) with strict timeout
     for (const key of getOpenRouterKeys()) {
       try {
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 6000);
+        const timer = setTimeout(() => ctrl.abort(), 3500);
         const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           signal: ctrl.signal,
           headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'inclusionai/ling-3.0-flash-vl:free',
-            max_tokens: 160,
-            temperature: 0.7,
+            model: 'nex-agi/nex-n2.5-mini:free',
+            max_tokens: 280,
+            temperature: 0.6,
             messages: [
               {
                 role: 'system',
-                content: 'You are an elite AI Art Director for Midjourney and FLUX.1. Convert the user input into an ultra-high-quality, professional English diffusion prompt. Include subject, environment, cinematic volumetric lighting, 85mm lens f/1.4 camera optics, hyper-realistic textures, and Unreal Engine 5 render style. NEVER include literal text, typography, letters, watermark words or "4k" text. Output ONLY the refined English prompt in 1-2 powerful sentences.'
+                content: 'You are an elite AI Art Director for Midjourney and Google Gemini. Convert user prompt into a rich, photorealistic, cinematic English prompt for image generation. Describe subject, environment, lighting, and camera optics. Never include text, watermarks, or "4k". Reply with ONLY the English prompt.'
               },
               { role: 'user', content: rawPrompt }
             ]
@@ -774,7 +817,7 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           const enhanced = data.choices?.[0]?.message?.content?.trim();
-          if (enhanced && enhanced.length > 15) {
+          if (enhanced && enhanced.length > 25 && !enhanced.endsWith('...')) {
             return enhanced.replace(/^["']|["']$/g, '');
           }
         }
@@ -782,67 +825,106 @@ export default function App() {
         // continue
       }
     }
-    return `${rawPrompt}, ultra-sharp focus, cinematic volumetric lighting, 8k resolution, hyper-detailed, masterpiece, highly detailed textures, photorealistic`;
+
+    return basePrompt;
   };
 
   const callOpenRouterImageGen = async (prompt: string, model: string = IMAGE_MODEL) => {
-    const cleanPrompt = prompt.replace(/^(tolong\s+|coba\s+)?(buatkan|buat|bikin|generate|lukiskan|lukis|gambarin)\s+(gambar|foto|lukisan|ilustrasi)?\s*/i, '').trim() || prompt;
+    const cleanPrompt = prompt.replace(/^(tolong\s+|coba\s+)?(buatkan|buat|bikin|generate|lukiskan|lukis|gambarin|gambar)\s+(gambar|foto|lukisan|ilustrasi)?\s*/i, '').trim() || prompt;
 
-    // 1. Determine optimal aspect ratio (16:9 for thumbnails/wallpapers, 9:16 for stories, 1:1 square)
-    let width = 1024;
-    let height = 1024;
+    // 1. Determine optimal aspect ratio (16:9 for landscape/vehicles, 9:16 for portrait, 1:1 for square)
+    let width = 1280;
+    let height = 720; // Default to widescreen cinematic 16:9 for cars/landscapes/wallpapers
     const lower = cleanPrompt.toLowerCase();
-    if (/thumbnail|youtube|wallpaper|banner|landscape|pemandangan|latar|cover|16:9/i.test(lower)) {
-      width = 1280;
-      height = 720;
+    if (/square|persegi|1:1|kotak|avatar|profil/i.test(lower)) {
+      width = 1024;
+      height = 1024;
     } else if (/story|reels|tiktok|portrait|potret|vertikal|wallpaper hp|9:16/i.test(lower)) {
       width = 720;
       height = 1280;
     }
 
-    // 2. Select optimal realism engine
-    let subModel = 'flux-realism';
-    if (/anime|manga|kartun|wibu|chibi/i.test(lower)) subModel = 'flux-anime';
-    else if (/3d|cgi|blender|pixar/i.test(lower)) subModel = 'flux-3d';
-
-    // 3. AI Prompt Expansion (Turns raw/Indonesian prompt into Midjourney/DALL-E grade English prompt)
+    // 2. AI Prompt Expansion
     const enhancedPrompt = await enhanceImagePrompt(cleanPrompt);
 
-    // 4. Try OpenRouter image generation API first if key has credits
+    // 3. Primary: Google Gemini Image on OpenRouter (chat/completions endpoint)
+    // Supports: google/gemini-3.1-flash-image, google/gemini-2.5-flash-image, google/gemini-3-pro-image
+    const targetGeminiModels = Array.from(new Set([
+      model.includes('gemini') ? model : 'google/gemini-3.1-flash-image',
+      'google/gemini-3.1-flash-image',
+      'google/gemini-2.5-flash-image'
+    ]));
+
     for (const key of getOpenRouterKeys()) {
-      try {
-        const res = await fetch('https://openrouter.ai/api/v1/images/generations', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: enhancedPrompt, model, response_format: 'url' })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const url = data.data?.[0]?.url;
-          if (url) return {
-            content: `🎨 **Hasil Gambar AI (Ultra HD):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${cleanPrompt}](${url})\n\n*(Model: ${model.split('/').pop()} · Resolusi: ${width}x${height})*`,
-            model
-          };
+      for (const gModel of targetGeminiModels) {
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 45000);
+          const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            signal: ctrl.signal,
+            headers: {
+              'Authorization': `Bearer ${key}`,
+              'Content-Type': 'application/json',
+              'X-Title': 'NOVA AI'
+            },
+            body: JSON.stringify({
+              model: gModel,
+              max_tokens: 4096,
+              messages: [
+                {
+                  role: 'user',
+                  content: `Generate a photorealistic, studio-quality, crystal-clear 4K commercial photograph of: ${enhancedPrompt}. Sharp focus, cinematic lighting, ultra-detailed textures, no watermark.`
+                }
+              ]
+            })
+          });
+          clearTimeout(timer);
+
+          if (res.ok) {
+            const data = await res.json();
+            const msg = data.choices?.[0]?.message;
+            let imgUrl = '';
+            if (msg?.images && msg.images.length > 0) {
+              imgUrl = msg.images[0]?.image_url?.url || msg.images[0]?.url || '';
+            }
+            if (!imgUrl && typeof msg?.content === 'string') {
+              const b64Match = msg.content.match(/data:image\/[a-zA-Z]+;base64,[A-Za-z0-9+/=]+/);
+              if (b64Match) imgUrl = b64Match[0];
+              const urlMatch = msg.content.match(/https?:\/\/[^\s\)"']+\.(png|jpg|jpeg|webp)/i);
+              if (!imgUrl && urlMatch) imgUrl = urlMatch[0];
+            }
+
+            if (imgUrl) {
+              const safeAlt = cleanPrompt.replace(/["'\[\]\(\)]/g, '');
+              const modelShortName = gModel.split('/').pop() || gModel;
+              return {
+                content: `🎨 **Hasil Gambar AI (Google Gemini 3.1 Studio 4K):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${safeAlt}](${imgUrl})\n\n*(Engine: ${modelShortName} · Kualitas: Ultra HD 4K · 100% Bebas Watermark)*`,
+                model: gModel
+              };
+            }
+          }
+        } catch {
+          // continue to next model/key
         }
-      } catch {
-        // continue to next key or fallback
       }
     }
 
-    // 5. High-Res Fallback: Pollinations AI (FLUX Realism Engine - Free, 1024x1024 or 1280x720)
+    // 4. High-Res Fallback: Pollinations AI (FLUX Engine)
     try {
       const seed = Math.floor(Math.random() * 1000000);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=${subModel}`;
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=flux`;
+      const safeAlt = cleanPrompt.replace(/["'\[\]\(\)]/g, '');
 
       return {
-        content: `🎨 **Hasil Gambar AI (Ultra HD):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${cleanPrompt}](${pollinationsUrl})\n\n*(Engine: FLUX.1 Ultra HD · Resolusi: ${width}×${height})*`,
-        model: model ? model.split('/').pop() || model : 'FLUX.1-Ultra'
+        content: `🎨 **Hasil Gambar AI (FLUX Studio HD):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${safeAlt}](${pollinationsUrl})\n\n*(Engine: FLUX.1 High-Res · Resolusi: ${width}×${height})*`,
+        model: 'FLUX.1-Ultra'
       };
     } catch (e) {
-      console.warn('Pollinations fallback error:', e);
+      console.warn('Fallback error:', e);
     }
 
-    throw new Error('Gagal membuat gambar. OpenRouter memerlukan kredit berbayar untuk model gambar langsung, dan server fallback sedang padat.');
+    throw new Error('Gagal membuat gambar. Server sedang padat, silakan coba beberapa saat lagi.');
   };
 
   const callOpenRouterSpeechGen = async (prompt: string, model: string) => {
@@ -1033,22 +1115,22 @@ export default function App() {
         result = await callOpenRouterSpeechGen(userContent, finalModel);
       } else if (isImageCapabilityQuestion) {
         result = {
-          content: `🎨 **Tentu saja bisa!** NOVA dilengkapi dengan engine pembuat gambar mutakhir (**High-Res FLUX.1 Engine & GPT Image**) untuk menghasilkan karya visual langsung di dalam chat.
+          content: `🎨 **Tentu saja bisa!** NOVA terintegrasi langsung dengan model pembuat gambar AI mutakhir dari Google (**Google Gemini 3.1 Flash Image & Gemini 2.5 Flash Image**) untuk menghasilkan karya visual fotorealistis 4K langsung di dalam chat tanpa watermark.
 
 Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
-1. **Fotorealistis** — Pemandangan alam, potret manusia realistis, hewan, mobil sport, arsitektur megah.
-2. **Anime & Manga** — Karakter anime estetik, konsep wallpaper cyberpunk, ilustrasi fantasi.
-3. **3D CGI & Digital Art** — Karakter game 3D, konsep seni futuristik sci-fi, pencahayaan neon artistik.
+1. **Fotorealistis Ultra HD** — Mobil sport mewah, pemandangan kota malam bertabur neon, potret manusia hidup, hewan, arsitektur sinematik.
+2. **Anime & Manga** — Karakter anime estetik, konsep wallpaper cyberpunk, ilustrasi fantasi Makoto Shinkai style.
+3. **3D CGI & Digital Art** — Karakter game 3D, konsep seni futuristik sci-fi, pencahayaan neon artistik Unreal Engine 5.
 4. **Desain Grafis & Logo** — Konsep logo minimalis modern, ikon vektor, stiker kreatif.
 
 💡 **Coba sekarang! Ketik langsung perintah seperti:**
-👉 \`buat gambar seekor kucing cyberpunk dengan kacamata neon di malam hari\`
+👉 \`buat mobil sport malam hari\`
 👉 \`buat gambar pemandangan danau pegunungan saat sunset dengan pantulan air jernih\`
-👉 \`buat gambar mobil sport futuristik melaju kencang di jalan tol malam\`
+👉 \`buat gambar seekor kucing cyberpunk dengan kacamata neon di malam hari\`
 👉 atau gunakan format \`/imagine [deskripsi kamu]\`
 
-*Ketik salah satu contoh di atas, dan gambar akan langsung dibuat untuk Anda!*`,
-          model: 'FLUX.1 Engine'
+*Ketik salah satu contoh di atas, dan Google Gemini akan langsung merender gambarnya untuk Anda!*`,
+          model: 'Google Gemini 3.1 Flash Image'
         };
       } else {
         // Text model
