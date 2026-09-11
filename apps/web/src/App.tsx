@@ -749,35 +749,95 @@ export default function App() {
     throw lastErr || new Error('Gagal menghubungi OpenRouter.');
   };
 
+  const enhanceImagePrompt = async (rawPrompt: string): Promise<string> => {
+    for (const key of getOpenRouterKeys()) {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 6000);
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          signal: ctrl.signal,
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'inclusionai/ling-3.0-flash-vl:free',
+            max_tokens: 160,
+            temperature: 0.7,
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an elite AI Art Director for Midjourney and FLUX.1. Convert the user input into an ultra-high-quality, professional English diffusion prompt. Include subject, environment, cinematic volumetric lighting, 85mm lens f/1.4 camera optics, hyper-realistic textures, and Unreal Engine 5 render style. NEVER include literal text, typography, letters, watermark words or "4k" text. Output ONLY the refined English prompt in 1-2 powerful sentences.'
+              },
+              { role: 'user', content: rawPrompt }
+            ]
+          })
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const data = await res.json();
+          const enhanced = data.choices?.[0]?.message?.content?.trim();
+          if (enhanced && enhanced.length > 15) {
+            return enhanced.replace(/^["']|["']$/g, '');
+          }
+        }
+      } catch {
+        // continue
+      }
+    }
+    return `${rawPrompt}, ultra-sharp focus, cinematic volumetric lighting, 8k resolution, hyper-detailed, masterpiece, highly detailed textures, photorealistic`;
+  };
+
   const callOpenRouterImageGen = async (prompt: string, model: string = IMAGE_MODEL) => {
     const cleanPrompt = prompt.replace(/^(tolong\s+|coba\s+)?(buatkan|buat|bikin|generate|lukiskan|lukis|gambarin)\s+(gambar|foto|lukisan|ilustrasi)?\s*/i, '').trim() || prompt;
 
-    // 1. Try OpenRouter image generation API first
+    // 1. Determine optimal aspect ratio (16:9 for thumbnails/wallpapers, 9:16 for stories, 1:1 square)
+    let width = 1024;
+    let height = 1024;
+    const lower = cleanPrompt.toLowerCase();
+    if (/thumbnail|youtube|wallpaper|banner|landscape|pemandangan|latar|cover|16:9/i.test(lower)) {
+      width = 1280;
+      height = 720;
+    } else if (/story|reels|tiktok|portrait|potret|vertikal|wallpaper hp|9:16/i.test(lower)) {
+      width = 720;
+      height = 1280;
+    }
+
+    // 2. Select optimal realism engine
+    let subModel = 'flux-realism';
+    if (/anime|manga|kartun|wibu|chibi/i.test(lower)) subModel = 'flux-anime';
+    else if (/3d|cgi|blender|pixar/i.test(lower)) subModel = 'flux-3d';
+
+    // 3. AI Prompt Expansion (Turns raw/Indonesian prompt into Midjourney/DALL-E grade English prompt)
+    const enhancedPrompt = await enhanceImagePrompt(cleanPrompt);
+
+    // 4. Try OpenRouter image generation API first if key has credits
     for (const key of getOpenRouterKeys()) {
       try {
         const res = await fetch('https://openrouter.ai/api/v1/images/generations', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: cleanPrompt, model, response_format: 'url' })
+          body: JSON.stringify({ prompt: enhancedPrompt, model, response_format: 'url' })
         });
         if (res.ok) {
           const data = await res.json();
           const url = data.data?.[0]?.url;
-          if (url) return { content: `🎨 **Hasil Gambar AI:** *"${cleanPrompt}"*\n\n![${cleanPrompt}](${url})`, model };
+          if (url) return {
+            content: `🎨 **Hasil Gambar AI (Ultra HD):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${cleanPrompt}](${url})\n\n*(Model: ${model.split('/').pop()} · Resolusi: ${width}x${height})*`,
+            model
+          };
         }
       } catch {
         // continue to next key or fallback
       }
     }
 
-    // 2. High-Res Fallback: Pollinations AI (Flux.1 Engine - Free, Instant, 1024x1024)
+    // 5. High-Res Fallback: Pollinations AI (FLUX Realism Engine - Free, 1024x1024 or 1280x720)
     try {
       const seed = Math.floor(Math.random() * 1000000);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(cleanPrompt)}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux`;
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=${subModel}`;
 
       const check = await fetch(pollinationsUrl, { method: 'HEAD' });
       if (check.ok) {
-        // Automatically crop the bottom watermark using in-browser Canvas
+        // In-memory Canvas cropping to eliminate bottom watermark
         let finalUrl = pollinationsUrl;
         try {
           const cleanUrl = await new Promise<string>((resolve) => {
@@ -788,7 +848,6 @@ export default function App() {
               clearTimeout(timer);
               try {
                 const canvas = document.createElement('canvas');
-                // Watermark resides in bottom ~4.5% of the image
                 const cropBottom = Math.round(img.naturalHeight * 0.048);
                 const targetH = img.naturalHeight - cropBottom;
                 canvas.width = img.naturalWidth;
@@ -796,7 +855,7 @@ export default function App() {
                 const ctx = canvas.getContext('2d');
                 if (ctx) {
                   ctx.drawImage(img, 0, 0, img.naturalWidth, targetH, 0, 0, img.naturalWidth, targetH);
-                  resolve(canvas.toDataURL('image/jpeg', 0.88));
+                  resolve(canvas.toDataURL('image/jpeg', 0.90));
                 } else {
                   resolve(pollinationsUrl);
                 }
@@ -816,8 +875,8 @@ export default function App() {
         }
 
         return {
-          content: `🎨 **Hasil Gambar AI:** *"${cleanPrompt}"*\n\n![${cleanPrompt}](${finalUrl})\n\n*(Model Engine: High-Res FLUX.1)*`,
-          model: model ? model.split('/').pop() || model : 'FLUX.1'
+          content: `🎨 **Hasil Gambar AI (Ultra HD):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${cleanPrompt}](${finalUrl})\n\n*(Engine: FLUX.1 Ultra HD · Resolusi: ${width}x${height})*`,
+          model: model ? model.split('/').pop() || model : 'FLUX.1-Ultra'
         };
       }
     } catch (e) {
