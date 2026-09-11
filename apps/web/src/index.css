@@ -1,78 +1,87 @@
 /* ============================================================================
-   NOVA — PROFESSIONAL INSTITUTIONAL WORKSPACE
-   Aesthetic: Linear App / Raycast / Bloomberg Professional Terminal
-   Mature dark palette, high readability typography, subtle hairlines
+   NOVA — ULTRA-PREMIUM INSTITUTIONAL WORKSPACE
+   Aesthetic: Linear App × Raycast × Bloomberg Terminal × Glassmorphism
+   Deep void palette, gradient accents, glow effects, micro-animations
    ============================================================================ */
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
 :root {
-  /* Surfaces */
-  --bg-void: #07090E;
-  --bg-obsidian: #0C1019;
-  --bg-panel: #111724;
-  --bg-panel-raised: #171F30;
-  --bg-input: #0F1420;
+  /* ── Surfaces ── */
+  --bg-void: #05070C;
+  --bg-obsidian: #0A0E18;
+  --bg-panel: #0F1422;
+  --bg-panel-raised: #151C2E;
+  --bg-input: #0C1120;
 
-  /* Aliases */
-  --bg-main: var(--bg-void);
-  --bg-surface: var(--bg-obsidian);
-  --bg-card: var(--bg-panel);
-  --bg-card-hover: var(--bg-panel-raised);
+  /* ── Glass Surfaces ── */
+  --glass-bg: rgba(12, 17, 30, 0.72);
+  --glass-bg-strong: rgba(15, 20, 34, 0.85);
+  --glass-border: rgba(255, 255, 255, 0.07);
+  --glass-blur: blur(24px);
 
-  /* Hairlines & Borders */
-  --hairline: rgba(255, 255, 255, 0.08);
-  --hairline-strong: rgba(255, 255, 255, 0.14);
-  --hairline-accent: rgba(59, 130, 246, 0.35);
+  /* ── Hairlines & Borders ── */
+  --hairline: rgba(255, 255, 255, 0.06);
+  --hairline-strong: rgba(255, 255, 255, 0.12);
+  --hairline-accent: rgba(99, 102, 241, 0.35);
 
-  --border-subtle: var(--hairline);
-  --border-card: var(--hairline);
-  --border-active: #3B82F6;
+  /* ── Typography ── */
+  --text-primary: #F1F5F9;
+  --text-secondary: #8B95A8;
+  --text-muted: #515B6E;
 
-  /* Typography */
-  --text-primary: #F8FAFC;
-  --text-secondary: #94A3B8;
-  --text-muted: #64748B;
+  /* ── Accent Palette ── */
+  --accent-primary: #6366F1;
+  --accent-primary-hover: #818CF8;
+  --accent-secondary: #3B82F6;
+  --accent-dim: rgba(99, 102, 241, 0.10);
+  --accent-glow: rgba(99, 102, 241, 0.25);
 
-  /* Accents */
-  --accent-primary: #3B82F6;
-  --accent-primary-hover: #2563EB;
-  --accent-indigo: #6366F1;
-  --accent-dim: rgba(59, 130, 246, 0.12);
+  /* ── Gradient Accents ── */
+  --gradient-brand: linear-gradient(135deg, #6366F1 0%, #8B5CF6 50%, #A78BFA 100%);
+  --gradient-brand-subtle: linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(139,92,246,0.08) 100%);
+  --gradient-send: linear-gradient(135deg, #6366F1 0%, #3B82F6 100%);
+  --gradient-danger: linear-gradient(135deg, #DC2626 0%, #EF4444 100%);
+  --gradient-emerald: linear-gradient(135deg, #059669 0%, #10B981 100%);
 
-  /* Market Semantics */
+  /* ── Market Semantics ── */
   --bull: #10B981;
-  --bull-dim: rgba(16, 185, 129, 0.12);
+  --bull-dim: rgba(16, 185, 129, 0.10);
   --bear: #EF4444;
-  --bear-dim: rgba(239, 68, 68, 0.12);
-  --amber: #F59E0B;
+  --bear-dim: rgba(239, 68, 68, 0.10);
 
-  --accent-emerald: var(--bull);
-  --accent-emerald-dark: var(--bull-dim);
-  --accent-rose: var(--bear);
+  /* ── Typography Stacks ── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 
-  /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
-
-  /* Radius */
+  /* ── Radius ── */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
   --radius-xl: 20px;
+  --radius-full: 9999px;
 
-  /* Shadows */
-  --shadow-subtle: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.5);
-  --shadow-accent: 0 0 0 1px var(--accent-primary), 0 4px 20px rgba(59, 130, 246, 0.25);
+  /* ── Shadows ── */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.55);
+  --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.15);
+  --shadow-glow-strong: 0 0 40px rgba(99, 102, 241, 0.25);
 
-  --transition-fast: 0.15s ease;
-  --transition-normal: 0.25s ease;
+  /* ── Transitions ── */
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-smooth: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-* {
+/* ── Global Reset ── */
+*, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body, html {
@@ -82,6 +91,7 @@ body, html {
   color: var(--text-primary);
   font-family: var(--font-sans);
   overflow: hidden;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 
 #root {
@@ -91,7 +101,7 @@ body, html {
   background-color: var(--bg-void);
 }
 
-/* Slim scrollbars */
+/* ── Premium Scrollbars ── */
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -102,14 +112,15 @@ body, html {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(99,102,241,0.2), rgba(99,102,241,0.08));
+  border-radius: var(--radius-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: linear-gradient(180deg, rgba(99,102,241,0.35), rgba(99,102,241,0.15));
 }
 
+/* ── Button Reset ── */
 button {
   cursor: pointer;
   border: none;
@@ -122,28 +133,29 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--accent-primary);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 
 input, textarea {
   font-family: var(--font-sans);
 }
 
+/* ── Keyframe Animations ── */
 @keyframes pulseGlow {
   0%, 100% {
-    opacity: 0.8;
-    transform: scale(1);
+    opacity: 0.7;
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.3);
   }
   50% {
     opacity: 1;
-    transform: scale(1.04);
+    box-shadow: 0 0 16px rgba(99, 102, 241, 0.5);
   }
 }
 
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -151,6 +163,81 @@ input, textarea {
   }
 }
 
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.2), inset 0 0 12px rgba(99, 102, 241, 0.05);
+  }
+  50% {
+    box-shadow: 0 0 24px rgba(99, 102, 241, 0.35), inset 0 0 24px rgba(99, 102, 241, 0.08);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes dotPulse {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+@keyframes borderGlow {
+  0%, 100% {
+    border-color: rgba(99, 102, 241, 0.2);
+  }
+  50% {
+    border-color: rgba(99, 102, 241, 0.45);
+  }
+}
+
+@keyframes floatIn {
+  from {
+    opacity: 0;
+    transform: scale(0.85) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.2s ease-out forwards;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.2s ease-out forwards;
 }
