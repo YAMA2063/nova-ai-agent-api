@@ -353,11 +353,10 @@ function MarkdownContent({ content }: { content: string }) {
   const html = useMemo(() => {
     try {
       const raw = marked.parse(content || '', { breaks: true, gfm: true }) as string;
-      // FIX: sanitize before injecting via dangerouslySetInnerHTML.
-      // Model output is untrusted content (it can be influenced by prompt
-      // injection from pasted text/images), so rendering its raw HTML
-      // without sanitizing is an XSS vector. Requires: npm i dompurify
-      return DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] });
+      return DOMPurify.sanitize(raw, {
+        ADD_ATTR: ['target'],
+        ADD_TAGS: ['img', 'audio', 'video']
+      });
     } catch { return ''; }
   }, [content]);
   return <div className="message-body prose" dangerouslySetInnerHTML={{ __html: html }} />;
@@ -835,50 +834,10 @@ export default function App() {
       const seed = Math.floor(Math.random() * 1000000);
       const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=${subModel}`;
 
-      const check = await fetch(pollinationsUrl, { method: 'HEAD' });
-      if (check.ok) {
-        // In-memory Canvas cropping to eliminate bottom watermark
-        let finalUrl = pollinationsUrl;
-        try {
-          const cleanUrl = await new Promise<string>((resolve) => {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            const timer = setTimeout(() => resolve(pollinationsUrl), 5000);
-            img.onload = () => {
-              clearTimeout(timer);
-              try {
-                const canvas = document.createElement('canvas');
-                const cropBottom = Math.round(img.naturalHeight * 0.048);
-                const targetH = img.naturalHeight - cropBottom;
-                canvas.width = img.naturalWidth;
-                canvas.height = targetH;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                  ctx.drawImage(img, 0, 0, img.naturalWidth, targetH, 0, 0, img.naturalWidth, targetH);
-                  resolve(canvas.toDataURL('image/jpeg', 0.90));
-                } else {
-                  resolve(pollinationsUrl);
-                }
-              } catch {
-                resolve(pollinationsUrl);
-              }
-            };
-            img.onerror = () => {
-              clearTimeout(timer);
-              resolve(pollinationsUrl);
-            };
-            img.src = pollinationsUrl;
-          });
-          if (cleanUrl) finalUrl = cleanUrl;
-        } catch {
-          finalUrl = pollinationsUrl;
-        }
-
-        return {
-          content: `🎨 **Hasil Gambar AI (Ultra HD):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${cleanPrompt}](${finalUrl})\n\n*(Engine: FLUX.1 Ultra HD · Resolusi: ${width}x${height})*`,
-          model: model ? model.split('/').pop() || model : 'FLUX.1-Ultra'
-        };
-      }
+      return {
+        content: `🎨 **Hasil Gambar AI (Ultra HD):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${cleanPrompt}](${pollinationsUrl})\n\n*(Engine: FLUX.1 Ultra HD · Resolusi: ${width}×${height})*`,
+        model: model ? model.split('/').pop() || model : 'FLUX.1-Ultra'
+      };
     } catch (e) {
       console.warn('Pollinations fallback error:', e);
     }
