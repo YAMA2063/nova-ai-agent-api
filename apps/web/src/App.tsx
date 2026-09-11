@@ -271,7 +271,21 @@ export function getOpenRouterKeys(): string[] {
 const SESSIONS_KEY = '@nova_web_sessions_v2';
 const ACTIVE_SESSION_KEY = '@nova_web_active_id_v2';
 
-const GENERAL_SYSTEM_PROMPT = `# Identitas & Prinsip NOVA (General Intelligence)\nKamu adalah NOVA, asisten AI otonom mutakhir yang berfokus pada kecerdasan komprehensif, penalaran logis, rekayasa kode, penulisan mendalam, dan analisis visual.\n\n## Prinsip Operasional:\n1. Alami & Objektif\n2. Multidisiplin\n3. Bebas Asumsi Finansial\n4. Epistemik Jujur`;
+const GENERAL_SYSTEM_PROMPT = `# Identitas & Kapabilitas NOVA (General Intelligence)
+Kamu adalah NOVA, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan multimodal lengkap.
+
+## Kapabilitas Utama:
+1. **Pembuatan Gambar AI Langsung (Image Generation)**:
+   - NOVA terintegrasi dengan generator gambar AI mutakhir (FLUX.1 High-Res & GPT Image).
+   - Kamu BISA dan MAMPU menghasilkan gambar visual langsung di dalam obrolan!
+   - Jika pengguna bertanya apakah kamu bisa membuat gambar atau gambar apa saja yang bisa kamu buat: Jelaskan dengan antusias bahwa kamu BISA membuat gambar (seperti potret fotorealistis, anime, ilustrasi 3D, pemandangan, logo, seni cyberpunk, dll.) dan ajak pengguna untuk mencobanya dengan mengetik perintah "buat gambar [deskripsi]" atau "/imagine [deskripsi]".
+   - JANGAN PERNAH mengatakan bahwa kamu adalah "asisten berbasis teks yang tidak bisa membuat gambar".
+2. **Penalaran Logis & Rekayasa Kode**: Pemrograman, analisis teknis, penulisan mendalam.
+3. **Analisis Pasar & Trading (Neurobro)**: Top-down MTF, aksi harga faktual.
+
+## Prinsip Operasional:
+1. Alami, Cerdas, dan Ramah
+2. Informatif, Lugas, dan Solutif`;
 
 const NEUROBRO_TRADING_PROMPT = `# NOVA Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
 
@@ -880,10 +894,15 @@ export default function App() {
     const isVideo = trimmed.startsWith('/video ');
 
     // Check if user is asking a question or chatting about capabilities (e.g. "anda bisa buat gambar apaan", "gambar apaa")
-    const isQuestionOrMeta = /\?|^(apa|apakah|bisa|bisakah|anda bisa|kamu bisa|tolong jelaskan|bagaimana|gimana|kenapa|mengapa|contoh|cara)\b/i.test(trimmed) || /\b(apaan|apa saja|apa aja|apa ya)\b/i.test(trimmed);
+    const isQuestionOrMeta = /\?|^(apa+|apakah|bisa|bisakah|anda bisa|kamu bisa|tolong jelaskan|bagaimana|gimana|kenapa|mengapa|contoh|cara)\b/i.test(trimmed) || /\b(apa+|apaan|apaaja|apa aja|apa saja|apa ya|apasih|apa sih)\b/i.test(trimmed);
 
-    // Imperative command to draw: "buatkan gambar kucing", "bikin pemandangan", "generate ilustrasi"
-    const isImperativeDraw = !isQuestionOrMeta && /^(tolong\s+|coba\s+)?(buatkan|buat|bikin|generate|lukiskan|lukis|gambarin)\s+(gambar|foto|lukisan|ilustrasi)?\s*(.+)/i.test(trimmed);
+    // Explicit question about image capabilities
+    const isImageCapabilityQuestion = /.*(bisa|apakah|bisa kah|mampu).*(gambar|foto|lukis|visual).*/i.test(trimmed)
+      || /.*(gambar|foto).*(apa+|apaan|apaaja|apa aja|apa saja|gimana|bagaimana|apasih|apa sih).*/i.test(trimmed)
+      || /^(gambar apa+|gambar apaan|gambar apa aja)\??$/i.test(trimmed);
+
+    // Imperative command to draw: "buatkan gambar kucing", "bikin pemandangan", "generate ilustrasi", "gambar kucing"
+    const isImperativeDraw = !isQuestionOrMeta && /^(tolong\s+|coba\s+)?(buatkan|buat|bikin|generate|lukiskan|lukis|gambarin|gambar)\s+(gambar|foto|lukisan|ilustrasi)?\s*(.+)/i.test(trimmed);
 
     const isImageIntent = isImagineCommand || isImperativeDraw;
     let finalModel = selectedModel;
@@ -947,6 +966,25 @@ export default function App() {
         result = await callOpenRouterImageGen(userContent, finalModel);
       } else if (isAudioModel) {
         result = await callOpenRouterSpeechGen(userContent, finalModel);
+      } else if (isImageCapabilityQuestion) {
+        result = {
+          content: `🎨 **Tentu saja bisa!** NOVA dilengkapi dengan engine pembuat gambar mutakhir (**High-Res FLUX.1 Engine & GPT Image**) untuk menghasilkan karya visual langsung di dalam chat.
+
+Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
+1. **Fotorealistis** — Pemandangan alam, potret manusia realistis, hewan, mobil sport, arsitektur megah.
+2. **Anime & Manga** — Karakter anime estetik, konsep wallpaper cyberpunk, ilustrasi fantasi.
+3. **3D CGI & Digital Art** — Karakter game 3D, konsep seni futuristik sci-fi, pencahayaan neon artistik.
+4. **Desain Grafis & Logo** — Konsep logo minimalis modern, ikon vektor, stiker kreatif.
+
+💡 **Coba sekarang! Ketik langsung perintah seperti:**
+👉 \`buat gambar seekor kucing cyberpunk dengan kacamata neon di malam hari\`
+👉 \`buat gambar pemandangan danau pegunungan saat sunset dengan pantulan air jernih\`
+👉 \`buat gambar mobil sport futuristik melaju kencang di jalan tol malam\`
+👉 atau gunakan format \`/imagine [deskripsi kamu]\`
+
+*Ketik salah satu contoh di atas, dan gambar akan langsung dibuat untuk Anda!*`,
+          model: 'FLUX.1 Engine'
+        };
       } else {
         // Text model
         result = await callOpenRouter(curMsgs, userContent, chatMode);
@@ -976,7 +1014,7 @@ export default function App() {
   const isWelcome = messages.length === 0;
 
   // Quick reply suggestions
-  const generalQuickReplies = ['Bantu saya menulis kode Python', 'Jelaskan konsep Machine Learning', 'Tips belajar programming', 'Analisis gambar yang saya kirim'];
+  const generalQuickReplies = ['🎨 Buat gambar kucing cyberpunk', '🎬 Buat video futuristik', 'Bantu saya menulis kode Python', 'Analisis data & gambar'];
   const tradingQuickReplies = ['Analisa BTC', 'Analisa ETH', 'Analisa SOL', 'Jelaskan SOP Neurobro'];
 
   // ============================================================================
