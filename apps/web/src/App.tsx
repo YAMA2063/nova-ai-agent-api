@@ -7,7 +7,7 @@ import './App.css';
 // ============================================================================
 const Icons = {
   nova: (
-    <img src="https://upload.wikimedia.org/wikipedia/id/1/19/Logo_Gunadarma.jpg" alt="NOVA" className="brand-logo-img" />
+    <img src="/logo.png" alt="NOVA" className="brand-logo-img" />
   ),
   plus: (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
