@@ -213,6 +213,7 @@ export type ORModel = {
   contextLength: number;
   inputModalities: string[];
   outputModalities: string[];
+  created: number;
 };
 
 // ============================================================================
@@ -363,6 +364,7 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState<ORModel[]>([]);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [modelTab, setModelTab] = useState<'all' | 'text' | 'image' | 'video' | 'audio'>('all');
+  const [modelSort, setModelSort] = useState<'popular' | 'newest' | 'oldest' | 'cheapest'>('popular');
   const [busy, setBusy] = useState(false);
   const [attachment, setAttachment] = useState<MediaAttachment | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -398,7 +400,8 @@ export default function App() {
             },
             contextLength: m.top_provider?.context_length || m.context_length || 0,
             inputModalities: m.architecture?.input_modalities || ['text'],
-            outputModalities: m.architecture?.output_modalities || ['text']
+            outputModalities: m.architecture?.output_modalities || ['text'],
+            created: m.created || 0
           }));
           
           // OpenRouter API returns models sorted by popularity by default.
@@ -1022,7 +1025,19 @@ export default function App() {
                 <div className="model-dropdown-header" style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', position: 'sticky', top: 0, background: 'transparent', zIndex: 10, backdropFilter: 'blur(24px)' }}>
                   <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>Omnimodal Models</span>
-                    <span style={{color: 'var(--text-muted)', fontWeight: 500, fontSize: '12px'}}>{availableModels.length} Total</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <select 
+                        value={modelSort} 
+                        onChange={(e) => setModelSort(e.target.value as any)}
+                        style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)', border: '1px solid var(--hairline-strong)', borderRadius: '6px', padding: '4px 8px', fontSize: '11px', outline: 'none', cursor: 'pointer' }}
+                      >
+                        <option value="popular">Most Popular</option>
+                        <option value="newest">Newest</option>
+                        <option value="oldest">Oldest</option>
+                        <option value="cheapest">Cheapest</option>
+                      </select>
+                      <span style={{color: 'var(--text-muted)', fontWeight: 500, fontSize: '12px'}}>{availableModels.length}</span>
+                    </div>
                   </div>
                   
                   {/* Modality Tabs */}
@@ -1052,6 +1067,15 @@ export default function App() {
                     if (modelTab === 'all') return true;
                     if (modelTab === 'audio') return m.outputModalities.includes('audio') || m.outputModalities.includes('speech');
                     return m.outputModalities.includes(modelTab);
+                  }).sort((a, b) => {
+                    if (modelSort === 'newest') return b.created - a.created;
+                    if (modelSort === 'oldest') return a.created - b.created;
+                    if (modelSort === 'cheapest') {
+                       const priceA = parseFloat(a.pricing.prompt) + parseFloat(a.pricing.completion);
+                       const priceB = parseFloat(b.pricing.prompt) + parseFloat(b.pricing.completion);
+                       return priceA - priceB;
+                    }
+                    return 0; // Default (Popular) is already sorted by OpenRouter
                   }).map(m => {
                     const isFree = m.pricing.prompt === '0' || m.pricing.prompt === '0.0';
                     
