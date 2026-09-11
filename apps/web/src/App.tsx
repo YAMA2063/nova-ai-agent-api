@@ -7,7 +7,7 @@ import './App.css';
 // ============================================================================
 const Icons = {
   nova: (
-    <img src="/logo (1).png" alt="NOVA" className="brand-logo-img" />
+    <img src="/nova logo.png" alt="NOVA" className="brand-logo-img" />
   ),
   plus: (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -582,7 +582,10 @@ export default function App() {
         {/* Brand Row */}
         <div className="sidebar-brand-row" onClick={() => { if (window.innerWidth <= 768) setSidebarOpen(!sidebarOpen); else setSidebarMini(!sidebarMini); }} style={{ cursor: 'pointer' }} title={sidebarMini ? 'Buka Sidebar' : 'Tutup Sidebar'}>
           <div className="brand-logo-group">
-            <div className="brand-emblem">{Icons.nova}</div>
+            <div className="brand-emblem">
+              <span className="emblem-logo">{Icons.nova}</span>
+              <span className="emblem-hover-icon">{Icons.panel}</span>
+            </div>
             <div className="sidebar-logo-text">
               <div className="brand-text">NOVA AI</div>
               <div className="brand-subtitle">Trading & Intelligence</div>

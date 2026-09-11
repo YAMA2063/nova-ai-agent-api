@@ -85,6 +85,30 @@
   box-shadow: 0 2px 10px var(--accent-glow);
 }
 
+.emblem-logo {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  transition: opacity 0.2s;
+}
+
+.emblem-hover-icon {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: #FFF;
+}
+
+.sidebar-brand-row:hover .emblem-logo {
+  display: none;
+}
+
+.sidebar-brand-row:hover .emblem-hover-icon {
+  display: flex;
+}
+
 .brand-emblem svg {
   width: 16px;
   height: 16px;
