@@ -706,18 +706,26 @@ export default function App() {
   };
 
   const callOpenRouterImageGen = async (prompt: string) => {
-    const key = getOpenRouterKeys()[0];
-    // We use standard OpenAI API structure for Images via OpenRouter
-    const res = await fetch('https://openrouter.ai/api/v1/images/generations', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, model: IMAGE_MODEL, response_format: 'url' })
-    });
-    if (!res.ok) throw new Error('Image generation gagal. Pastikan model tersedia.');
-    const data = await res.json();
-    const url = data.data?.[0]?.url;
-    if (!url) throw new Error('URL Gambar kosong dari API.');
-    return { content: `![Generated Image](${url})`, model: IMAGE_MODEL };
+    let lastErr: any = null;
+    for (const key of getOpenRouterKeys()) {
+      try {
+        const res = await fetch('https://openrouter.ai/api/v1/images/generations', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, model: IMAGE_MODEL, response_format: 'url' })
+        });
+        if (!res.ok) {
+           if (res.status === 401 || res.status === 402) lastErr = new Error(`HTTP ${res.status}: API Key tidak valid atau kuota habis.`);
+           else lastErr = new Error(`Image generation gagal (HTTP ${res.status}). Pastikan model tersedia.`);
+           continue;
+        }
+        const data = await res.json();
+        const url = data.data?.[0]?.url;
+        if (!url) { lastErr = new Error('URL Gambar kosong dari API.'); break; }
+        return { content: `![Generated Image](${url})`, model: IMAGE_MODEL };
+      } catch (e: any) { lastErr = e; }
+    }
+    throw lastErr || new Error('Image generation gagal. Periksa koneksi atau API Key Anda.');
   };
 
   const callOpenRouterSpeechGen = async (prompt: string, model: string) => {
@@ -744,38 +752,47 @@ export default function App() {
   };
 
   const callOpenRouterVideoGen = async (prompt: string, model: string) => {
-    const key = getOpenRouterKeys()[0];
-    const startRes = await fetch('https://openrouter.ai/api/v1/videos', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, model })
-    });
-    
-    if (!startRes.ok) throw new Error('Gagal memulai render video. Pastikan model mendukung video.');
-    const startData = await startRes.json();
-    const jobId = startData.id || startData.data?.id;
-    if (!jobId) throw new Error('Gagal mendapatkan Job ID Video.');
+    let lastErr: any = null;
+    for (const key of getOpenRouterKeys()) {
+      try {
+        const startRes = await fetch('https://openrouter.ai/api/v1/videos', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, model })
+        });
+        
+        if (!startRes.ok) {
+           if (startRes.status === 401 || startRes.status === 402) lastErr = new Error(`HTTP ${startRes.status}: API Key tidak valid atau kuota habis.`);
+           else lastErr = new Error('Gagal memulai render video. Pastikan model mendukung video.');
+           continue;
+        }
+        const startData = await startRes.json();
+        const jobId = startData.id || startData.data?.id;
+        if (!jobId) { lastErr = new Error('Gagal mendapatkan Job ID Video.'); break; }
 
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 10000));
-      const pollRes = await fetch(`https://openrouter.ai/api/v1/videos/generation?id=${jobId}`, {
-        headers: { 'Authorization': `Bearer ${key}` }
-      });
-      if (!pollRes.ok) continue;
-      const pollData = await pollRes.json();
-      
-      const status = pollData.status || pollData.data?.status;
-      const url = pollData.url || pollData.data?.url || pollData.data?.video_url;
-      
-      if (status === 'completed' || status === 'succeeded' || url) {
-        if (!url) throw new Error('Video selesai tapi URL kosong.');
-        return { content: `![Generated Video](${url})`, model };
-      }
-      if (status === 'failed' || status === 'error') {
-        throw new Error('Render video gagal di server.');
-      }
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 10000));
+          const pollRes = await fetch(`https://openrouter.ai/api/v1/videos/generation?id=${jobId}`, {
+            headers: { 'Authorization': `Bearer ${key}` }
+          });
+          if (!pollRes.ok) continue;
+          const pollData = await pollRes.json();
+          
+          const status = pollData.status || pollData.data?.status;
+          const url = pollData.url || pollData.data?.url || pollData.data?.video_url;
+          
+          if (status === 'completed' || status === 'succeeded' || url) {
+            if (!url) throw new Error('Video selesai tapi URL kosong.');
+            return { content: `![Generated Video](${url})`, model };
+          }
+          if (status === 'failed' || status === 'error') {
+            throw new Error('Render video gagal di server.');
+          }
+        }
+        throw new Error('Timeout: Render video memakan waktu lebih dari 5 menit.');
+      } catch (e: any) { lastErr = e; }
     }
-    throw new Error('Timeout: Render video memakan waktu lebih dari 5 menit.');
+    throw lastErr || new Error('Video generation gagal. Periksa koneksi atau API Key Anda.');
   };
 
   // ── Auto Analysis ──
@@ -821,21 +838,21 @@ export default function App() {
     }
 
     // Smart Intent Detection for Image Generation
-    const imageIntentMatch = trimmed.match(/^(?:buatkan|buat|bikin|generate|tolong buatkan)\s+(?:gambar|image|foto|lukisan|ilustrasi)\s+(.+)/i);
+    const isImageIntentStr = trimmed.match(/.*(buat|bikin|gambar|generate|foto).*gambar.*/i) || trimmed.match(/.*(buat|bikin|gambar|generate|foto).*foto.*/i) || trimmed.startsWith('/imagine ');
     const isVideo = trimmed.startsWith('/video ');
     let finalModel = selectedModel;
-    let isImageIntent = trimmed.startsWith('/imagine ');
+    let isImageIntent = !!isImageIntentStr;
     let userContent = trimmed;
 
-    if (imageIntentMatch && !isImageIntent) {
+    if (isImageIntentStr && !trimmed.startsWith('/imagine ')) {
       isImageIntent = true;
-      userContent = imageIntentMatch[1].trim(); // Extract the actual prompt
+      userContent = trimmed; // Keep full text
       // Auto-switch to default image model if current is not image
       const curr = availableModels.find(m => m.id === selectedModel);
       if (!curr?.outputModalities.includes('image')) {
         finalModel = IMAGE_MODEL;
       }
-    } else if (isImageIntent) {
+    } else if (trimmed.startsWith('/imagine ')) {
       userContent = trimmed.slice(9).trim();
       const curr = availableModels.find(m => m.id === selectedModel);
       if (!curr?.outputModalities.includes('image')) {
