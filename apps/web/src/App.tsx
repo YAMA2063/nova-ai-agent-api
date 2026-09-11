@@ -832,17 +832,7 @@ export default function App() {
   const callOpenRouterImageGen = async (prompt: string, model: string = IMAGE_MODEL) => {
     const cleanPrompt = prompt.replace(/^(tolong\s+|coba\s+)?(buatkan|buat|bikin|generate|lukiskan|lukis|gambarin|gambar)\s+(gambar|foto|lukisan|ilustrasi)?\s*/i, '').trim() || prompt;
 
-    // 1. Determine optimal aspect ratio (16:9 for landscape/vehicles, 9:16 for portrait, 1:1 for square)
-    let width = 1280;
-    let height = 720; // Default to widescreen cinematic 16:9 for cars/landscapes/wallpapers
-    const lower = cleanPrompt.toLowerCase();
-    if (/square|persegi|1:1|kotak|avatar|profil/i.test(lower)) {
-      width = 1024;
-      height = 1024;
-    } else if (/story|reels|tiktok|portrait|potret|vertikal|wallpaper hp|9:16/i.test(lower)) {
-      width = 720;
-      height = 1280;
-    }
+
 
     // 2. AI Prompt Expansion
     const enhancedPrompt = await enhanceImagePrompt(cleanPrompt);
@@ -956,25 +946,8 @@ export default function App() {
       }
     }
 
-    // 4. Fallback to Pollinations AI with the user's requested model if available
-    try {
-      const seed = Math.floor(Math.random() * 1000000);
-      let subModel = 'flux';
-      if (isExplicitSunburst) subModel = 'gpt-image-2.5-sunburst';
-      else if (model.includes('anime')) subModel = 'flux-anime';
-      else if (model.includes('3d')) subModel = 'flux-3d';
-
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}&model=${subModel}`;
-
-      return {
-        content: `🎨 **Hasil Gambar AI (${modelDisplayName}):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${safeAlt}](${pollinationsUrl})\n\n*(Engine: ${modelDisplayName} · Resolusi: ${width}×${height})*`,
-        model
-      };
-    } catch (e) {
-      console.warn('Fallback error:', e);
-    }
-
-    throw new Error('Gagal membuat gambar. Server sedang padat, silakan coba beberapa saat lagi.');
+    // 4. Fallback: If all OpenRouter attempts fail, throw an error instead of using Pollinations AI
+    throw new Error('Gagal membuat gambar menggunakan model yang dipilih. Kuota API (Credits) OpenRouter Anda mungkin habis, atau server sedang sibuk. Silakan periksa pengaturan API Key Anda atau coba lagi nanti.');
   };
 
   const callOpenRouterSpeechGen = async (prompt: string, model: string) => {
