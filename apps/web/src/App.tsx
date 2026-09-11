@@ -401,14 +401,8 @@ export default function App() {
             outputModalities: m.architecture?.output_modalities || ['text']
           }));
           
-          const sorted = mapped.sort((a, b) => {
-             const aFree = a.pricing.prompt === '0' || a.pricing.prompt === '0.0';
-             const bFree = b.pricing.prompt === '0' || b.pricing.prompt === '0.0';
-             if (aFree && !bFree) return -1;
-             if (!aFree && bFree) return 1;
-             return 0;
-          });
-          setAvailableModels(sorted);
+          // OpenRouter API returns models sorted by popularity by default.
+          setAvailableModels(mapped);
         }
       } catch (err) {
         console.error('Failed to fetch models', err);

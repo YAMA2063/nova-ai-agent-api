@@ -1343,23 +1343,23 @@
 .composer-box {
   max-width: 760px;
   margin: 0 auto;
-  background: rgba(25, 25, 25, 0.4);
+  background: var(--glass-bg);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border);
   border-radius: 24px;
   padding: 8px 8px 8px 16px;
   display: flex;
   align-items: center;
   gap: 8px;
   transition: all var(--transition-fast);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-md);
 }
 
 .composer-box:focus-within {
-  background: rgba(30, 30, 30, 0.6);
-  border-color: rgba(255, 255, 255, 0.2);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  background: var(--glass-bg-strong);
+  border-color: var(--hairline-strong);
+  box-shadow: var(--shadow-lg), 0 0 0 1px var(--hairline-strong);
 }
 
 .composer-icon-btn {
@@ -1418,7 +1418,7 @@
 
 .composer-send-btn {
   background: var(--text-primary);
-  color: var(--bg-void);
+  color: var(--bg-obsidian);
   padding: 10px 20px;
   border-radius: 18px;
   font-size: 13.5px;
