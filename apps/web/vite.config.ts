@@ -18,6 +18,11 @@ export default defineConfig({
         target: 'https://tokenharbor.ai',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/proxy\/tokenharbor/, '')
+      },
+      '/proxy/googlenews': {
+        target: 'https://news.google.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/proxy\/googlenews/, '')
       }
     }
   }

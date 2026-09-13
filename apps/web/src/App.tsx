@@ -196,6 +196,17 @@ const Icons = {
       <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
       <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
     </svg>
+  ),
+  globe: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  ),
+  search: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
   )
 };
 
@@ -594,7 +605,7 @@ Kamu adalah SONEX, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan m
 ## Prinsip Operasional & Batasan:
 1. Alami, Cerdas, dan Ramah
 2. Informatif, Lugas, dan Solutif
-3. **Kejujuran Faktual & Larangan Klaim Browsing**: Kamu tidak memiliki alat penjelajah web (live web browsing) di sesi chat ini. JANGAN PERNAH berhalusinasi mengklaim atau menawarkan diri kepada pengguna untuk "mencari atau menjelajah di internet (web browsing)". Jika ada rumor atau pertanyaan tentang sesuatu yang belum rilis/belum ada, jelaskan secara jujur dan faktual apa adanya tanpa menjanjikan pencarian web.`;
+3. **Pencarian Web Langsung (Live Web Search)**: Jika dalam sesi chat ini disediakan informasi hasil penelusuran web langsung ([INFORMASI PENCARIAN WEB REAL-TIME TERKINI]), kamu WAJIB memanfaatkan informasi faktual tersebut sebagai referensi utama untuk menjawab secara akurat, mendalam, dan menyertakan tautan sumber rujukan dengan format markdown link ([Nama Sumber](URL)). Jika fitur pencarian web sedang tidak aktif dan pengguna menanyakan kabar/peristiwa terkini yang tidak kamu ketahui, ingatkan pengguna dengan ramah bahwa mereka bisa mengaktifkan tombol '🌐 Cari Web' di samping kolom input chat.`;
 
 const NEUROBRO_TRADING_PROMPT = `# SONEX Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
 
@@ -602,6 +613,150 @@ const IMAGE_MODEL = 'google/gemini-3.1-flash-image';
 
 function getFormattedTime(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// ============================================================================
+// LIVE WEB SEARCH AGGREGATOR (Google News, Wikipedia, HackerNews)
+// ============================================================================
+export interface WebSearchResult {
+  source: string;
+  title: string;
+  snippet: string;
+  link: string;
+  pubDate?: string;
+}
+
+export async function searchLiveWeb(query: string): Promise<WebSearchResult[]> {
+  const results: WebSearchResult[] = [];
+  const cleanQuery = query.replace(/^\/(search|cari)\s+/i, '').trim();
+  if (!cleanQuery) return results;
+
+  const fetchWithTimeout = async (url: string, timeoutMs = 4500): Promise<any> => {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      clearTimeout(id);
+      if (res.ok) return await res.json();
+    } catch {
+      clearTimeout(id);
+    }
+    return null;
+  };
+
+  const fetchTextWithTimeout = async (url: string, timeoutMs = 4500): Promise<string | null> => {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      clearTimeout(id);
+      if (res.ok) return await res.text();
+    } catch {
+      clearTimeout(id);
+    }
+    return null;
+  };
+
+  // 1. Google News RSS
+  const pGoogleNews = (async () => {
+    try {
+      const isLocal = typeof window !== 'undefined' && (window.location.port === '3000' || window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'));
+      let xmlText: string | null = null;
+
+      if (isLocal) {
+        xmlText = await fetchTextWithTimeout(`/proxy/googlenews/rss/search?q=${encodeURIComponent(cleanQuery)}&hl=id&gl=ID&ceid=ID:id`, 4500);
+      }
+
+      if (!xmlText) {
+        const rssUrl = encodeURIComponent(`https://news.google.com/rss/search?q=${encodeURIComponent(cleanQuery)}&hl=id&gl=ID&ceid=ID:id`);
+        const data = await fetchWithTimeout(`https://api.rss2json.com/v1/api.json?rss_url=${rssUrl}`, 4500);
+        if (data?.items && Array.isArray(data.items)) {
+          data.items.slice(0, 4).forEach((item: any) => {
+            results.push({
+              source: 'Google News',
+              title: item.title,
+              snippet: item.description ? item.description.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim() : '',
+              link: item.link,
+              pubDate: item.pubDate
+            });
+          });
+          return;
+        }
+      }
+
+      if (xmlText) {
+        const itemRegex = /<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<pubDate>([\s\S]*?)<\/pubDate>/g;
+        let match;
+        let count = 0;
+        while ((match = itemRegex.exec(xmlText)) && count < 4) {
+          count++;
+          results.push({
+            source: 'Google News',
+            title: match[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim(),
+            snippet: match[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim(),
+            link: match[2].trim(),
+            pubDate: match[3].trim()
+          });
+        }
+      }
+    } catch {}
+  })();
+
+  // 2. Indonesian Wikipedia
+  const pWikiId = (async () => {
+    try {
+      const data = await fetchWithTimeout(`https://id.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanQuery)}&format=json&origin=*`, 3500);
+      if (data?.query?.search && Array.isArray(data.query.search)) {
+        data.query.search.slice(0, 2).forEach((item: any) => {
+          results.push({
+            source: 'Wikipedia (ID)',
+            title: item.title,
+            snippet: item.snippet ? item.snippet.replace(/<[^>]*>/g, '').replace(/&quot;/g, '"').trim() : '',
+            link: `https://id.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`
+          });
+        });
+      }
+    } catch {}
+  })();
+
+  // 3. English Wikipedia
+  const pWikiEn = (async () => {
+    try {
+      const data = await fetchWithTimeout(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanQuery)}&format=json&origin=*`, 3500);
+      if (data?.query?.search && Array.isArray(data.query.search)) {
+        data.query.search.slice(0, 2).forEach((item: any) => {
+          results.push({
+            source: 'Wikipedia (EN)',
+            title: item.title,
+            snippet: item.snippet ? item.snippet.replace(/<[^>]*>/g, '').replace(/&quot;/g, '"').trim() : '',
+            link: `https://en.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`
+          });
+        });
+      }
+    } catch {}
+  })();
+
+  // 4. HackerNews Algolia API
+  const pHackerNews = (async () => {
+    try {
+      const data = await fetchWithTimeout(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(cleanQuery)}&hitsPerPage=3`, 3500);
+      if (data?.hits && Array.isArray(data.hits)) {
+        data.hits.slice(0, 2).forEach((item: any) => {
+          if (item.title && (item.url || item.story_text)) {
+            results.push({
+              source: 'HackerNews',
+              title: item.title,
+              snippet: (item.story_text || item.title || '').replace(/<[^>]*>/g, '').slice(0, 200),
+              link: item.url || `https://news.ycombinator.com/item?id=${item.objectID}`
+            });
+          }
+        });
+      }
+    } catch {}
+  })();
+
+  await Promise.allSettled([pGoogleNews, pWikiId, pWikiEn, pHackerNews]);
+  return results;
 }
 
 // ============================================================================
@@ -707,6 +862,26 @@ export default function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recognitionRef = useRef<any>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  // Web Search (Live Grounding)
+  const [isWebSearchActive, setIsWebSearchActive] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('sonex_web_search_active') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [searchingWebQuery, setSearchingWebQuery] = useState<string | null>(null);
+
+  const handleToggleWebSearch = () => {
+    setIsWebSearchActive(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('sonex_web_search_active', String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   const [showChartPanel, setShowChartPanel] = useState(true);
   const [selectedSymbol, setSelectedSymbol] = useState('BTCUSDT');
@@ -1103,7 +1278,13 @@ export default function App() {
   };
 
   // Quick reply handler
-  const handleQuickReply = (text: string) => { setInput(text); };
+  const handleQuickReply = (text: string) => {
+    if (text.includes('🌐') || text.toLowerCase().includes('berita') || text.toLowerCase().includes('terkini')) {
+      setIsWebSearchActive(true);
+      try { localStorage.setItem('sonex_web_search_active', 'true'); } catch {}
+    }
+    setInput(text);
+  };
 
   // ── API Call ──
   const callOpenRouter = async (
@@ -1656,7 +1837,30 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
         };
       } else {
         // Text model - Execute with chosen model!
-        result = await callOpenRouter(curMsgs, userContent, chatMode, finalModel);
+        let textToSend = userContent;
+        const isSearchTriggered = isWebSearchActive || /^\/(search|cari)\s+/i.test(userContent);
+
+        if (isSearchTriggered) {
+          const cleanQuery = userContent.replace(/^\/(search|cari)\s+/i, '').trim();
+          setSearchingWebQuery(cleanQuery);
+          try {
+            const webResults = await searchLiveWeb(cleanQuery);
+            if (webResults.length > 0) {
+              const todayStr = new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+              const sourcesText = webResults.map((s, idx) => 
+                `[${idx + 1}] Judul: ${s.title}\n    Sumber: ${s.source}${s.pubDate ? ` (${s.pubDate})` : ''}\n    Kutipan: ${s.snippet}\n    Tautan: ${s.link}`
+              ).join('\n\n');
+
+              textToSend = `[INFORMASI PENCARIAN WEB REAL-TIME TERKINI — HARI INI: ${todayStr}]:\nBerikut adalah rangkuman artikel dan informasi faktual terkini dari internet untuk pertanyaan pengguna:\n\n${sourcesText}\n\n---\nPERTANYAAN PENGGUNA:\n"${cleanQuery}"\n\nINSTRUKSI PENJAWABAN:\nJawab pertanyaan pengguna secara komprehensif, faktual, dan mendalam menggunakan data penelusuran web di atas. Wajib cantumkan rujukan sumber atau tautan markdown jika relevan (misal: [Nama Sumber](URL)).`;
+            }
+          } catch (e) {
+            console.warn('Web search error:', e);
+          } finally {
+            setSearchingWebQuery(null);
+          }
+        }
+
+        result = await callOpenRouter(curMsgs, textToSend, chatMode, finalModel);
       }
       const aMsg: UiMessage = { id: `a_${Date.now()}`, role: 'assistant', content: result.content, modelUsed: result.model.split('/').pop(), timestamp: getFormattedTime() };
       
@@ -1676,7 +1880,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
   const isWelcome = messages.length === 0;
 
   // Quick reply suggestions
-  const generalQuickReplies = ['🎨 Buat gambar kucing cyberpunk', '🗣️ Tes Suara AI (Text-to-Speech)', 'Bantu saya menulis kode Python', 'Analisis data & gambar'];
+  const generalQuickReplies = ['🌐 Berita AI & Gemini Terkini', '🎨 Buat gambar kucing cyberpunk', '🗣️ Tes Suara AI (Text-to-Speech)', 'Bantu saya menulis kode Python'];
   const tradingQuickReplies = ['Analisa BTC', 'Analisa ETH', 'Analisa SOL', 'Jelaskan SOP Neurobro'];
 
   // ============================================================================
@@ -2064,7 +2268,11 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
               <div className="assistant-avatar-circle"><img src="/sonex logo.png" alt="SONEX" /></div>
               <div className="thinking-pill">
                 <div className="typing-dots"><span /><span /><span /></div>
-                <span>SONEX sedang menganalisa…</span>
+                <span>
+                  {searchingWebQuery 
+                    ? `🔍 SONEX sedang menjelajah web: "${searchingWebQuery.slice(0, 32)}${searchingWebQuery.length > 32 ? '…' : ''}"…` 
+                    : 'SONEX sedang menganalisa…'}
+                </span>
               </div>
             </div>
           )}
@@ -2084,16 +2292,42 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
               <button className="attachment-close-btn" onClick={() => setAttachment(null)}>{Icons.x}</button>
             </div>
           )}
+          {isWebSearchActive && (
+            <div className="web-search-indicator-pill">
+              <span className="web-pulse-dot" />
+              <span>🌐 <strong>Cari Web Aktif:</strong> Penelusuran langsung Google Berita, Wikipedia & HackerNews diikutsertakan.</span>
+              <button 
+                type="button" 
+                className="web-close-pill" 
+                onClick={handleToggleWebSearch}
+                title="Matikan pencarian web"
+              >
+                ✕ Matikan
+              </button>
+            </div>
+          )}
           <div className="composer-box">
             <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*,video/*,audio/*" onChange={handleFileChange} />
             <button className="composer-icon-btn" onClick={() => fileInputRef.current?.click()} title="Unggah Media">{Icons.paperclip}</button>
             <button className={`composer-icon-btn ${isRecordingAudio ? 'active-mic' : ''}`} onClick={handleToggleVoiceRecord} title="Rekam Audio">{Icons.mic}</button>
-            <textarea className="composer-textarea" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} placeholder={chatMode === 'trading' ? 'Ketik "Analisa BTC" atau tanyakan setup…' : 'Ketik pesan atau /imagine untuk generate gambar…'} rows={1} />
+            <button 
+              type="button" 
+              className={`composer-icon-btn ${isWebSearchActive ? 'active-web' : ''}`} 
+              onClick={handleToggleWebSearch} 
+              title={isWebSearchActive ? "Pencarian Web Aktif (Klik untuk matikan)" : "Aktifkan Pencarian Web Langsung (Google Berita, Wikipedia, HN)"}
+            >
+              {Icons.globe}
+            </button>
+            <textarea className="composer-textarea" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} placeholder={chatMode === 'trading' ? 'Ketik "Analisa BTC" atau tanyakan setup…' : (isWebSearchActive ? 'Tanyakan berita, riset terkini, atau topik mutakhir…' : 'Ketik pesan, /search untuk cari web, atau /imagine untuk gambar…')} rows={1} />
             <button className="composer-send-btn" onClick={handleSend} disabled={busy || (!input.trim() && !attachment)}>
               {Icons.send} Kirim
             </button>
           </div>
-          <div className="composer-hint">Tekan Enter untuk mengirim · Awali prompt dengan /imagine untuk buat gambar</div>
+          <div className="composer-hint">
+            {isWebSearchActive 
+              ? '🌐 Pencarian Web Langsung Aktif · Mengambil data real-time dari internet' 
+              : 'Tekan Enter untuk mengirim · Aktifkan 🌐 Cari Web untuk informasi berita terkini'}
+          </div>
         </footer>
       </main>
 
