@@ -634,10 +634,18 @@ export interface WebSearchResult {
   pubDate?: string;
 }
 
+export function extractSearchKeywords(raw: string): string {
+  const stopWordsRegex = /\b(lah|kan|kok|dong|deh|sih|ya|nih|tuh|yah|lho|loh|mah|pun|kah|adalah|yaitu|itu|ini|dari|pada|tentang|mengenai|soal|apakah|apaan|apa|siapa|kenapa|mengapa|bagaimana|gimana|kapan|dimana|ke mana|di mana|mana|emang|beneran|benaran|bisa|bisakah|buat|bikin|kek|kayak|seperti|gini|gitu|tau|tahu|kenal|ngerti|paham|maksud|maksudnya|ada|ga|nggak|tidak|belum)\b/gi;
+  const cleaned = raw.replace(stopWordsRegex, ' ').replace(/[?!,.:;]/g, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned.length >= 2 ? cleaned : raw;
+}
+
 export async function searchLiveWeb(query: string): Promise<WebSearchResult[]> {
   const results: WebSearchResult[] = [];
   const cleanQuery = query.replace(/^\/(search|cari)\s+/i, '').trim();
   if (!cleanQuery) return results;
+
+  const keywords = extractSearchKeywords(cleanQuery);
 
   const fetchWithTimeout = async (url: string, timeoutMs = 4500): Promise<any> => {
     const ctrl = new AbortController();
@@ -665,19 +673,48 @@ export async function searchLiveWeb(query: string): Promise<WebSearchResult[]> {
     return null;
   };
 
-  // 1. Google News RSS
+  // 1. OpenRouter Live Model Registry Lookup (if query touches AI models/tools)
+  const pOpenRouter = (async () => {
+    if (/claude|gpt|gemini|deepseek|fable|luna|mistral|llama|anthropic|openai|model|router|ai\b/i.test(cleanQuery)) {
+      try {
+        const data = await fetchWithTimeout('https://openrouter.ai/api/v1/models', 3500);
+        if (data?.data && Array.isArray(data.data)) {
+          const terms = keywords.toLowerCase().split(/\s+/).filter((w: string) => w.length >= 3);
+          if (terms.length > 0) {
+            const matches = data.data.filter((m: any) => {
+              const idL = (m.id || '').toLowerCase();
+              const nameL = (m.name || '').toLowerCase();
+              return terms.every((t: string) => idL.includes(t) || nameL.includes(t));
+            }).slice(0, 3);
+
+            matches.forEach((m: any) => {
+              results.push({
+                source: 'OpenRouter Registry (Live)',
+                title: `${m.name || m.id} (Context: ${(m.context_length || 0).toLocaleString()} tokens)`,
+                snippet: m.description || `Model resmi ${m.id}. Tersedia di OpenRouter.`,
+                link: `https://openrouter.ai/${m.id}`
+              });
+            });
+          }
+        }
+      } catch {}
+    }
+  })();
+
+  // 2. Google News RSS (searches both keywords and cleanQuery)
   const pGoogleNews = (async () => {
     try {
       const isLocal = typeof window !== 'undefined' && (window.location.port === '3000' || window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1'));
       let xmlText: string | null = null;
+      const termToSearch = keywords || cleanQuery;
 
       if (isLocal) {
-        xmlText = await fetchTextWithTimeout(`/proxy/googlenews/rss/search?q=${encodeURIComponent(cleanQuery)}&hl=id&gl=ID&ceid=ID:id`, 4500);
+        xmlText = await fetchTextWithTimeout(`/proxy/googlenews/rss/search?q=${encodeURIComponent(termToSearch)}&hl=id&gl=ID&ceid=ID:id`, 4000);
       }
 
       if (!xmlText) {
-        const rssUrl = encodeURIComponent(`https://news.google.com/rss/search?q=${encodeURIComponent(cleanQuery)}&hl=id&gl=ID&ceid=ID:id`);
-        const data = await fetchWithTimeout(`https://api.rss2json.com/v1/api.json?rss_url=${rssUrl}`, 4500);
+        const rssUrl = encodeURIComponent(`https://news.google.com/rss/search?q=${encodeURIComponent(termToSearch)}&hl=id&gl=ID&ceid=ID:id`);
+        const data = await fetchWithTimeout(`https://api.rss2json.com/v1/api.json?rss_url=${rssUrl}`, 4000);
         if (data?.items && Array.isArray(data.items)) {
           data.items.slice(0, 4).forEach((item: any) => {
             results.push({
@@ -710,10 +747,31 @@ export async function searchLiveWeb(query: string): Promise<WebSearchResult[]> {
     } catch {}
   })();
 
-  // 2. Indonesian Wikipedia
+  // 3. HackerNews Algolia API
+  const pHackerNews = (async () => {
+    try {
+      const termToSearch = keywords || cleanQuery;
+      const data = await fetchWithTimeout(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(termToSearch)}&hitsPerPage=3`, 3500);
+      if (data?.hits && Array.isArray(data.hits)) {
+        data.hits.slice(0, 3).forEach((item: any) => {
+          if (item.title && (item.url || item.story_text)) {
+            results.push({
+              source: 'HackerNews',
+              title: item.title,
+              snippet: (item.story_text || item.title || '').replace(/<[^>]*>/g, '').slice(0, 220),
+              link: item.url || `https://news.ycombinator.com/item?id=${item.objectID}`
+            });
+          }
+        });
+      }
+    } catch {}
+  })();
+
+  // 4. Indonesian Wikipedia
   const pWikiId = (async () => {
     try {
-      const data = await fetchWithTimeout(`https://id.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanQuery)}&format=json&origin=*`, 3500);
+      const termToSearch = keywords || cleanQuery;
+      const data = await fetchWithTimeout(`https://id.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(termToSearch)}&format=json&origin=*`, 3000);
       if (data?.query?.search && Array.isArray(data.query.search)) {
         data.query.search.slice(0, 2).forEach((item: any) => {
           results.push({
@@ -727,10 +785,11 @@ export async function searchLiveWeb(query: string): Promise<WebSearchResult[]> {
     } catch {}
   })();
 
-  // 3. English Wikipedia
+  // 5. English Wikipedia
   const pWikiEn = (async () => {
     try {
-      const data = await fetchWithTimeout(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanQuery)}&format=json&origin=*`, 3500);
+      const termToSearch = keywords || cleanQuery;
+      const data = await fetchWithTimeout(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(termToSearch)}&format=json&origin=*`, 3000);
       if (data?.query?.search && Array.isArray(data.query.search)) {
         data.query.search.slice(0, 2).forEach((item: any) => {
           results.push({
@@ -744,26 +803,7 @@ export async function searchLiveWeb(query: string): Promise<WebSearchResult[]> {
     } catch {}
   })();
 
-  // 4. HackerNews Algolia API
-  const pHackerNews = (async () => {
-    try {
-      const data = await fetchWithTimeout(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(cleanQuery)}&hitsPerPage=3`, 3500);
-      if (data?.hits && Array.isArray(data.hits)) {
-        data.hits.slice(0, 2).forEach((item: any) => {
-          if (item.title && (item.url || item.story_text)) {
-            results.push({
-              source: 'HackerNews',
-              title: item.title,
-              snippet: (item.story_text || item.title || '').replace(/<[^>]*>/g, '').slice(0, 200),
-              link: item.url || `https://news.ycombinator.com/item?id=${item.objectID}`
-            });
-          }
-        });
-      }
-    } catch {}
-  })();
-
-  await Promise.allSettled([pGoogleNews, pWikiId, pWikiEn, pHackerNews]);
+  await Promise.allSettled([pOpenRouter, pGoogleNews, pHackerNews, pWikiId, pWikiEn]);
   return results;
 }
 
