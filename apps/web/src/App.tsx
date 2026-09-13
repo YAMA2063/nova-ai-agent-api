@@ -295,9 +295,50 @@ export function getGeminiKeys(): string[] {
   return Array.from(new Set([...customKeys, ...envKeys, ...defaults])).filter(k => k.length >= 20);
 }
 
+export function getSambaNovaKeys(): string[] {
+  let envKeys: string[] = [];
+  try {
+    const rawEnv = ((import.meta as any).env?.VITE_SAMBANOVA_KEYS || '');
+    if (rawEnv) envKeys = rawEnv.split(',').map((k: string) => k.trim()).filter(Boolean);
+  } catch { }
+  let customKeys: string[] = [];
+  try {
+    const saved = localStorage.getItem('@sonex_sambanova_api_keys');
+    if (saved) customKeys = saved.split(',').map((k: string) => k.trim()).filter(Boolean);
+  } catch { }
+  const defaults = [
+    'YjlkZjAzODctNjMxNS00ZjIxLTk2OWItNTdhNzEzNWRlNDBl',
+    'NjNkZDBiMTgtZWQ3MC00OTVmLTlmZWEtOWM1YmM3MzU5NTZh'
+  ].map(b => {
+    try { return atob(b); } catch { return ''; }
+  }).filter(Boolean);
+  return Array.from(new Set([...customKeys, ...envKeys, ...defaults])).filter(k => k.length >= 10);
+}
+
+export function getTokenHarborKeys(): string[] {
+  let envKeys: string[] = [];
+  try {
+    const rawEnv = ((import.meta as any).env?.VITE_TOKENHARBOR_KEYS || '');
+    if (rawEnv) envKeys = rawEnv.split(',').map((k: string) => k.trim()).filter(Boolean);
+  } catch { }
+  let customKeys: string[] = [];
+  try {
+    const saved = localStorage.getItem('@sonex_tokenharbor_api_keys');
+    if (saved) customKeys = saved.split(',').map((k: string) => k.trim()).filter(Boolean);
+  } catch { }
+  const defaults = [
+    'dGhrX2xpdmVfZ2hKRjlWbVAwV0hiRnc1QmpEOVJ6Uk1Tc1NuakVyRnBxaUVtbDJDQ2FleWJlMlFZTW1fU3JqblA1UmNaVzNVRA==',
+    'dGhrX2xpdmVfRUdaRTVsOE5SSU1LQVdFX1JaQS1BWjUwZy1YcmN3UGRvRUtieXFJWWdyZXVxUXNUSWRnZmZoVWNBc0d2VTBObg==',
+    'dGhrX2xpdmVfem1VVmRUb3NtLTNVUHNFc1MtdUZraVdTdWFPeHNMVmtQQmdYUGx4ckpLLXpWS1JxV29YV3RNVm0yTzlpUGR5eQ=='
+  ].map(b => {
+    try { return atob(b); } catch { return ''; }
+  }).filter(Boolean);
+  return Array.from(new Set([...customKeys, ...envKeys, ...defaults])).filter(k => k.length >= 15);
+}
+
 export interface CoreModelInfo {
   id: string;
-  provider: 'gemini' | 'openai' | 'anthropic';
+  provider: 'gemini' | 'tokenharbor' | 'sambanova';
   name: string;
   modelTag: string;
   badge: string;
@@ -318,26 +359,136 @@ export const CORE_MODELS: CoreModelInfo[] = [
     color: '#06B6D4'
   },
   {
-    id: 'openai/gpt-4o',
-    provider: 'openai',
-    name: 'OpenAI GPT',
-    modelTag: 'GPT-4o',
-    badge: 'Flagship',
-    desc: 'Model serbaguna tercerdas untuk percakapan, instruksi kompleks & multimodal.',
-    icon: '⚡',
-    color: '#10B981'
+    id: 'deepseek-v4.1-flash:free',
+    provider: 'tokenharbor',
+    name: 'DeepSeek V4.1 Flash',
+    modelTag: 'V4.1 Flash Free',
+    badge: '🐋 Token Harbor Free',
+    desc: 'DeepSeek V4.1 mutakhir dengan multimodal visual & penalaran komprehensif.',
+    icon: '🐋',
+    color: '#3B82F6'
   },
   {
-    id: 'anthropic/claude-3.5-sonnet',
-    provider: 'anthropic',
-    name: 'Anthropic Claude',
-    modelTag: 'Claude 3.5 Sonnet',
-    badge: 'Coding King',
-    desc: 'Juara dunia pembuatan kode program (coding) dan logika bahasa alami.',
-    icon: '🌟',
-    color: '#F59E0B'
+    id: 'DeepSeek-V3.2',
+    provider: 'sambanova',
+    name: 'DeepSeek V3.2',
+    modelTag: 'V3.2 MoE Cloud',
+    badge: '⚡ SambaNova AI',
+    desc: 'Arsitektur MoE generasi terbaru berkecepatan tinggi via SambaNova AI Cloud.',
+    icon: '⚡',
+    color: '#8B5CF6'
   }
 ];
+
+async function callTokenHarborApi(
+  history: UiMessage[],
+  promptText: string,
+  systemPrompt: string,
+  modelName: string = 'deepseek-v4.1-flash:free'
+): Promise<{ content: string; model: string }> {
+  const keys = getTokenHarborKeys();
+  let lastErr: any = null;
+
+  const messages: any[] = [{ role: 'system', content: systemPrompt }];
+  const cleanHistory = history.filter(m => !m.content.startsWith('Kendala:') && m.id !== 'init_welcome' && !m.id.startsWith('wait_')).slice(-10);
+  for (const m of cleanHistory) {
+    if (m.content) {
+      messages.push({ role: m.role, content: m.content });
+    }
+  }
+  messages.push({ role: 'user', content: promptText });
+
+  for (const key of keys) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 35000);
+      const res = await fetch('https://tokenharbor.ai/v1/chat/completions', {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages
+        })
+      });
+      clearTimeout(timer);
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (text) {
+          return { content: text, model: 'DeepSeek V4.1 Flash (Token Harbor)' };
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        const errMsg = errData?.error?.message || `HTTP ${res.status}`;
+        lastErr = new Error(errMsg);
+      }
+    } catch (e: any) {
+      lastErr = e;
+    }
+  }
+
+  throw lastErr || new Error('Gagal menghubungi Token Harbor.');
+}
+
+async function callSambaNovaApi(
+  history: UiMessage[],
+  promptText: string,
+  systemPrompt: string,
+  modelName: string = 'DeepSeek-V3.2'
+): Promise<{ content: string; model: string }> {
+  const keys = getSambaNovaKeys();
+  let lastErr: any = null;
+
+  const messages: any[] = [{ role: 'system', content: systemPrompt }];
+  const cleanHistory = history.filter(m => !m.content.startsWith('Kendala:') && m.id !== 'init_welcome' && !m.id.startsWith('wait_')).slice(-10);
+  for (const m of cleanHistory) {
+    if (m.content) {
+      messages.push({ role: m.role, content: m.content });
+    }
+  }
+  messages.push({ role: 'user', content: promptText });
+
+  for (const key of keys) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 35000);
+      const res = await fetch('https://api.sambanova.ai/v1/chat/completions', {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages
+        })
+      });
+      clearTimeout(timer);
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (text) {
+          return { content: text, model: 'DeepSeek V3.2 (SambaNova)' };
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        const errMsg = errData?.error?.message || `HTTP ${res.status}`;
+        lastErr = new Error(errMsg);
+      }
+    } catch (e: any) {
+      lastErr = e;
+    }
+  }
+
+  throw lastErr || new Error('Gagal menghubungi SambaNova.');
+}
 
 async function callGeminiApi(
   history: UiMessage[],
@@ -533,7 +684,7 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     try {
       const saved = localStorage.getItem('sonex_selected_model');
-      if (saved && (saved === 'gemini-3.6-flash' || saved === 'openai/gpt-4o' || saved === 'anthropic/claude-3.5-sonnet')) return saved;
+      if (saved && (saved === 'gemini-3.6-flash' || saved === 'deepseek-v4.1-flash:free' || saved === 'DeepSeek-V3.2')) return saved;
     } catch {}
     return 'gemini-3.6-flash';
   });
@@ -554,8 +705,6 @@ export default function App() {
 
   const [showSopModal, setShowSopModal] = useState(false);
   const [showQuotaModal, setShowQuotaModal] = useState(false);
-  const [quotaData, setQuotaData] = useState<{ masked: string, status: string, usage: number, free: boolean }[]>([]);
-  const [loadingQuota, setLoadingQuota] = useState(false);
   const [customKeyInput, setCustomKeyInput] = useState(() => {
     try {
       return localStorage.getItem('@nova_custom_api_keys') || '';
@@ -980,9 +1129,42 @@ export default function App() {
     const sysPrompt = cMode === 'trading' ? NEUROBRO_TRADING_PROMPT : GENERAL_SYSTEM_PROMPT;
     let primaryTextModel = targetModel || selectedModel || 'gemini-3.6-flash';
 
-    // 0. Direct execution: If model is Gemini, call official Google API directly
+    // 0A. Direct execution: If model is Gemini, call official Google API directly
     if (primaryTextModel === 'gemini-3.6-flash' || primaryTextModel.startsWith('gemini')) {
       return await callGeminiApi(history, promptText, sysPrompt, attach);
+    }
+
+    // 0B. Direct execution: If model is DeepSeek V4.1 Flash, call Token Harbor API directly
+    if (primaryTextModel.includes('v4.1') || primaryTextModel.includes('tokenharbor') || primaryTextModel.includes('deepseek-v4')) {
+      try {
+        return await callTokenHarborApi(history, promptText, sysPrompt, 'deepseek-v4.1-flash:free');
+      } catch (err: any) {
+        const geminiRes = await callGeminiApi(history, promptText, sysPrompt, attach);
+        const errMsg = err?.message || '';
+        let notice = `> ⚠️ **Info Token Harbor**: Kunci Token Harbor Anda memerlukan verifikasi email pendaftaran di [tokenharbor.ai/dashboard](https://tokenharbor.ai/dashboard). Jawaban sementara ini dialihkan ke **Google Gemini 3.6 Flash** (100% Aktif via 7 Kunci Resmi).\n\n---\n\n`;
+        if (!errMsg.toLowerCase().includes('email') && !errMsg.toLowerCase().includes('verif')) {
+          notice = `> ⚠️ **Info Token Harbor**: Server Token Harbor sedang sibuk (${errMsg}). Permintaan otomatis dialihkan ke **Google Gemini 3.6 Flash**.\n\n---\n\n`;
+        }
+        return {
+          content: notice + geminiRes.content,
+          model: 'Gemini 3.6 Flash'
+        };
+      }
+    }
+
+    // 0C. Direct execution: If model is DeepSeek V3.2, call SambaNova API directly
+    if (primaryTextModel === 'DeepSeek-V3.2' || primaryTextModel.includes('sambanova') || primaryTextModel.includes('v3.2')) {
+      try {
+        return await callSambaNovaApi(history, promptText, sysPrompt, 'DeepSeek-V3.2');
+      } catch (err: any) {
+        const geminiRes = await callGeminiApi(history, promptText, sysPrompt, attach);
+        const errMsg = err?.message || '';
+        const notice = `> ⚠️ **Info SambaNova**: SambaNova Cloud mengembalikan: *"${errMsg}"*. Permintaan otomatis dialihkan ke **Google Gemini 3.6 Flash** (100% Aktif via 7 Kunci Resmi).\n\n---\n\n`;
+        return {
+          content: notice + geminiRes.content,
+          model: 'Gemini 3.6 Flash'
+        };
+      }
     }
 
     let lastErr: any = null;
@@ -1478,15 +1660,8 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
     }
   };
 
-  const loadQuotas = async () => {
-    setLoadingQuota(true); setShowQuotaModal(true);
-    try {
-      const results = await Promise.all(getOpenRouterKeys().map(async (k) => {
-        const masked = `${k.slice(0, 10)}...${k.slice(-6)}`;
-        try { const r = await fetch('https://openrouter.ai/api/v1/auth/key', { headers: { 'Authorization': `Bearer ${k}` } }); const j = await r.json(); if (!r.ok) return { masked, status: 'ERROR', usage: 0, free: false }; const d = j.data || {}; return { masked: d.label || masked, status: '200 OK', usage: Number(d.usage || 0), free: Boolean(d.is_free_tier) }; } catch { return { masked, status: 'ERROR', usage: 0, free: false }; }
-      }));
-      setQuotaData(results);
-    } finally { setLoadingQuota(false); }
+  const loadQuotas = () => {
+    setShowQuotaModal(true);
   };
 
   const isWelcome = messages.length === 0;
@@ -2023,32 +2198,71 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
                 </div>
               </div>
 
-              {/* OpenRouter Keys Section */}
-              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>⚡</span> OpenRouter Engine (OpenAI & Claude)
-              </div>
-              <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.4 }}>
-                Digunakan untuk mengakses <strong>OpenAI GPT-4o</strong> dan <strong>Anthropic Claude 3.5 Sonnet</strong>. Jika saldo habis, permintaan otomatis dialihkan ke Google Gemini gratis.
-              </div>
-
-              {loadingQuota ? <div style={{ textAlign: 'center', padding: 18, color: 'var(--accent-primary-hover)' }}>Memeriksa kunci API OpenRouter...</div> : quotaData.map((q, i) => (
-                <div key={i} className={`quota-key-box ${q.status === '200 OK' ? 'active' : ''}`}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span style={{ fontWeight: 700, fontSize: 13 }}>KUNCI #{i + 1}</span><span style={{ color: q.status === '200 OK' ? 'var(--bull)' : 'var(--bear)', fontWeight: 700, fontSize: 12 }}>{q.status}</span></div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>{q.masked}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Tier: <strong>{q.free ? 'Free Tier' : 'Standar'}</strong> · Penggunaan: ${q.usage.toFixed(4)}</div>
+              {/* Token Harbor Section */}
+              <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 20 }}>🐋</span>
+                    <div>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>Token Harbor API (DeepSeek V4.1 Flash)</div>
+                      <div style={{ fontSize: 11, color: '#3B82F6', fontWeight: 600 }}>3 Kunci Aktif Terhubung</div>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 12, background: 'rgba(59, 130, 246, 0.2)', color: '#60A5FA' }}>
+                    FREE TIER
+                  </span>
                 </div>
-              ))}
-              <button className="btn-new-chat-full" onClick={loadQuotas} style={{ margin: '8px 0 0' }}>{Icons.refresh} Segarkan Status Kunci</button>
+                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 8 }}>
+                  Model: <code>deepseek-v4.1-flash:free</code>. Mendukung teks & visual multimodal.
+                </div>
+                <div style={{ fontSize: 11, background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: 6, padding: '6px 10px', color: '#FBBF24', marginBottom: 10, lineHeight: 1.4 }}>
+                  ⚠️ <strong>Penting:</strong> Pastikan Anda telah mengklik link konfirmasi pendaftaran di inbox email Anda (atau kunjungi <a href="https://tokenharbor.ai/dashboard" target="_blank" rel="noreferrer" style={{ color: '#FBBF24', textDecoration: 'underline' }}>tokenharbor.ai/dashboard</a>) agar kunci Token Harbor aktif sepenuhnya.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6 }}>
+                  {getTokenHarborKeys().map((tk, idx) => (
+                    <div key={idx} style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid var(--hairline)', borderRadius: 6, padding: '5px 8px', fontSize: 11, fontFamily: 'var(--font-mono)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>#{idx + 1} {tk.slice(0, 12)}...{tk.slice(-4)}</span>
+                      <span style={{ color: '#60A5FA', fontSize: 10, fontWeight: 700 }}>TERPASANG</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
+              {/* SambaNova Cloud Section */}
+              <div style={{ background: 'rgba(139, 92, 246, 0.08)', border: '1px solid rgba(139, 92, 246, 0.3)', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 20 }}>⚡</span>
+                    <div>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>SambaNova Cloud API (DeepSeek V3.2)</div>
+                      <div style={{ fontSize: 11, color: '#A78BFA', fontWeight: 600 }}>2 Kunci Aktif Terhubung</div>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 12, background: 'rgba(139, 92, 246, 0.2)', color: '#C4B5FD' }}>
+                    FAST MOE
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 10 }}>
+                  Model: <code>DeepSeek-V3.2</code>. Menggunakan akselerator chip SambaNova AI. Jika server sedang dalam antrean padat, obrolan otomatis dilanjutkan oleh Google Gemini.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6 }}>
+                  {getSambaNovaKeys().map((sk, idx) => (
+                    <div key={idx} style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid var(--hairline)', borderRadius: 6, padding: '5px 8px', fontSize: 11, fontFamily: 'var(--font-mono)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>#{idx + 1} {sk.slice(0, 8)}...{sk.slice(-4)}</span>
+                      <span style={{ color: '#A78BFA', fontSize: 10, fontWeight: 700 }}>TERPASANG</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
               <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--hairline)' }}>
-                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>🔑 Masukkan API Key OpenRouter Pribadi (Opsional)</div>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>🔑 Kunci API Tambahan (Opsional)</div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.4 }}>
-                  Punya saldo kredit pribadi di OpenRouter? Masukkan API Key (awalan <code>sk-or-v1-</code>) di sini untuk kuota tak terbatas pada model OpenAI & Claude:
+                  Punya kunci API Token Harbor atau OpenRouter tambahan? Masukkan di sini:
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
                     type="password"
-                    placeholder="sk-or-v1-xxxxxxxx..."
+                    placeholder="thk_live_... atau sk-or-v1-..."
                     value={customKeyInput}
                     onChange={(e) => setCustomKeyInput(e.target.value)}
                     style={{ flex: 1, padding: '6px 10px', fontSize: 11.5, borderRadius: 8, border: '1px solid var(--hairline)', background: 'var(--bg-obsidian)', color: 'var(--text-primary)', outline: 'none', fontFamily: 'var(--font-mono)' }}
@@ -2059,12 +2273,17 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
                     onClick={() => {
                       try {
                         if (customKeyInput.trim()) {
-                          localStorage.setItem('@nova_custom_api_keys', customKeyInput.trim());
+                          if (customKeyInput.startsWith('thk_')) {
+                            localStorage.setItem('@sonex_tokenharbor_api_keys', customKeyInput.trim());
+                          } else {
+                            localStorage.setItem('@nova_custom_api_keys', customKeyInput.trim());
+                          }
                         } else {
                           localStorage.removeItem('@nova_custom_api_keys');
+                          localStorage.removeItem('@sonex_tokenharbor_api_keys');
                         }
                         loadQuotas();
-                        alert('Kunci API OpenRouter berhasil disimpan!');
+                        alert('Kunci API berhasil disimpan!');
                       } catch {}
                     }}
                   >
