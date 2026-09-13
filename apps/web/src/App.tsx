@@ -605,7 +605,15 @@ Kamu adalah SONEX, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan m
 ## Prinsip Operasional & Batasan:
 1. Alami, Cerdas, dan Ramah
 2. Informatif, Lugas, dan Solutif
-3. **Pencarian Web Langsung (Live Web Search)**: Jika dalam sesi chat ini disediakan informasi hasil penelusuran web langsung ([INFORMASI PENCARIAN WEB REAL-TIME TERKINI]), kamu WAJIB memanfaatkan informasi faktual tersebut sebagai referensi utama untuk menjawab secara akurat, mendalam, dan menyertakan tautan sumber rujukan dengan format markdown link ([Nama Sumber](URL)). Jika fitur pencarian web sedang tidak aktif dan pengguna menanyakan kabar/peristiwa terkini yang tidak kamu ketahui, ingatkan pengguna dengan ramah bahwa mereka bisa mengaktifkan tombol '🌐 Cari Web' di samping kolom input chat.`;
+3. **Pencarian Web Langsung (Live Web Search)**: Jika dalam sesi chat ini disediakan informasi hasil penelusuran web langsung ([INFORMASI PENCARIAN WEB REAL-TIME TERKINI]), kamu WAJIB memanfaatkan informasi faktual tersebut sebagai referensi utama untuk menjawab secara akurat, mendalam, dan menyertakan tautan sumber rujukan dengan format markdown link ([Nama Sumber](URL)). Jika fitur pencarian web sedang tidak aktif dan pengguna menanyakan kabar/peristiwa terkini yang tidak kamu ketahui, ingatkan pengguna dengan ramah bahwa mereka bisa mengaktifkan tombol '🌐 Cari Web' di samping kolom input chat.
+
+## Pengetahuan Ekosistem Model AI Terkini (Lanskap 2026):
+Kamu memiliki wawasan mendalam mengenai model-model AI modern tahun 2026:
+- **Anthropic**: Selain lini klasik (Claude 3.5 / 3.7 Haiku, Sonnet, Opus), Anthropic pada Juni 2026 secara resmi meluncurkan lini model kasta **Mythos-class: Claude Fable 5** dan **Claude Fable 5.1** (dikenal di OpenRouter sebagai \`anthropic/claude-fable-5\` dan \`anthropic/claude-fable-5.1\`). Claude Fable memiliki context length raksasa 1.000.000 token (1 Juta Token) yang secara khusus dirancang untuk autonomous knowledge work, coding tingkat lanjut, dan agentic execution dengan penalaran mendalam.
+- **OpenAI**: Selain lini GPT-4o dan GPT-5, OpenAI merilis lini model flagship **GPT-5.6 Luna** dan **GPT-5.6 Luna Pro** (\`openai/gpt-5.6-luna\`), yang dirancang untuk penalaran multimodal tingkat tinggi.
+- **Google**: Lini Google Gemini mencakup Gemini 3.6 Flash, Gemini 3.8 Flash, serta varian analisis keamanan siber Gemini 3.8 Flash Cyber.
+- **DeepSeek**: DeepSeek V3.2 MoE dan DeepSeek V4.1 Flash (multimodal visual).
+- **9Router**: Gateway/router pintar open-source (\`https://9router.com\` atau CLI \`npm install -g 9router\`) yang berfungsi sebagai smart proxy multi-provider untuk menghubungkan IDE/tools (Cursor, Cline, dll.) ke 60+ provider AI dengan fallback otomatis 3 lapis.`;
 
 const NEUROBRO_TRADING_PROMPT = `# SONEX Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
 
@@ -1331,9 +1339,9 @@ export default function App() {
       } catch (err: any) {
         const geminiRes = await callGeminiApi(history, promptText, sysPrompt, attach);
         const errMsg = err?.message || '';
-        let notice = `> ⚠️ **Info Token Harbor**: Kunci Token Harbor Anda memerlukan verifikasi email pendaftaran di [tokenharbor.ai/dashboard](https://tokenharbor.ai/dashboard). Jawaban sementara ini dialihkan ke **Google Gemini 3.6 Flash** (100% Aktif via 7 Kunci Resmi).\n\n---\n\n`;
+        let notice = `> ⚠️ **Info Token Harbor**: Akun Token Harbor Anda memerlukan konfirmasi/verifikasi email pendaftaran di inbox email Anda (buka email Anda lalu klik link verifikasi Token Harbor). Respon dialihkan ke **Google Gemini 3.6 Flash** (100% Aktif).\n\n---\n\n`;
         if (!errMsg.toLowerCase().includes('email') && !errMsg.toLowerCase().includes('verif')) {
-          notice = `> ⚠️ **Info Token Harbor**: Server Token Harbor sedang sibuk (${errMsg}). Permintaan otomatis dialihkan ke **Google Gemini 3.6 Flash**.\n\n---\n\n`;
+          notice = `> ⚠️ **Info Token Harbor**: Server Token Harbor (${errMsg}). Respon sementara dialihkan ke **Google Gemini 3.6 Flash**.\n\n---\n\n`;
         }
         return {
           content: notice + geminiRes.content,
@@ -1349,7 +1357,10 @@ export default function App() {
       } catch (err: any) {
         const geminiRes = await callGeminiApi(history, promptText, sysPrompt, attach);
         const errMsg = err?.message || '';
-        const notice = `> ⚠️ **Info SambaNova**: SambaNova Cloud mengembalikan: *"${errMsg}"*. Permintaan otomatis dialihkan ke **Google Gemini 3.6 Flash** (100% Aktif via 7 Kunci Resmi).\n\n---\n\n`;
+        let notice = `> ⚠️ **Info SambaNova**: SambaNova Cloud mewajibkan pendaftaran kartu/metode pembayaran di [cloud.sambanova.ai/plans/billing](https://cloud.sambanova.ai/plans/billing) sebelum API dapat memproses request. Respon dialihkan ke **Google Gemini 3.6 Flash** (100% Aktif).\n\n---\n\n`;
+        if (!errMsg.toLowerCase().includes('payment') && !errMsg.toLowerCase().includes('billing')) {
+          notice = `> ⚠️ **Info SambaNova**: SambaNova Cloud mengembalikan: *"${errMsg}"*. Respon dialihkan ke **Google Gemini 3.6 Flash**.\n\n---\n\n`;
+        }
         return {
           content: notice + geminiRes.content,
           model: 'Gemini 3.6 Flash'
