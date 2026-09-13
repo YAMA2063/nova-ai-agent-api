@@ -34,7 +34,6 @@
 .sidebar.mini { width: var(--mini-w); }
 .sidebar.mini .sidebar-logo-text,
 .sidebar.mini .brand-version,
-.sidebar.mini .sidebar-collapse-btn,
 .sidebar.mini .btn-new-chat-full,
 .sidebar.mini .sidebar-section-title,
 .sidebar.mini .mode-switcher-capsule,
@@ -138,22 +137,7 @@
   flex-shrink: 0;
 }
 
-/* ── Collapse & Close Buttons ── */
-.sidebar-collapse-btn {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 6px;
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--transition-fast);
-  flex-shrink: 0;
-}
-.sidebar-collapse-btn:hover { background: var(--bg-panel-raised); color: var(--text-primary); }
-.sidebar-collapse-btn svg { width: 16px; height: 16px; }
+/* ── Mobile Close Button ── */
 
 .sidebar-close-btn {
   display: none;
@@ -541,14 +525,6 @@
 .header-btn:hover { background: var(--bg-panel-raised); color: var(--text-primary); border-color: var(--hairline-strong); }
 .header-btn.active-chart { color: var(--accent-secondary); border-color: rgba(6,182,212,0.3); background: rgba(6,182,212,0.08); }
 
-.header-sidebar-toggle {
-  padding: 6px 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.header-sidebar-toggle svg { width: 16px; height: 16px; }
 
 /* ── Model Selector Pill ── */
 .model-selector-pill {

@@ -1212,13 +1212,13 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
       {/* ════════ SIDEBAR ════════ */}
       <aside className={`sidebar ${sidebarMini ? 'mini' : ''} ${sidebarOpen ? 'open' : ''}`}>
         {/* Brand Row */}
-        <div className="sidebar-brand-row">
-          <div 
-            className="brand-logo-group" 
-            onClick={() => { if (sidebarMini) setSidebarMini(false); }}
-            style={{ cursor: sidebarMini ? 'pointer' : 'default' }}
-            title={sidebarMini ? 'Klik untuk memperluas sidebar' : undefined}
-          >
+        <div 
+          className="sidebar-brand-row" 
+          onClick={() => { if (isMobile) setSidebarOpen(!sidebarOpen); else setSidebarMini(!sidebarMini); }}
+          style={{ cursor: 'pointer' }}
+          title={sidebarMini ? 'Perluas Sidebar' : 'Ciutkan Sidebar'}
+        >
+          <div className="brand-logo-group">
             <div className="brand-emblem">
               <img src="/sonex logo.png" alt="SONEX AI" className="brand-logo-img" />
             </div>
@@ -1228,13 +1228,9 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
             </div>
           </div>
           <span className="brand-version">PRO</span>
-          <button 
-            className="sidebar-collapse-btn" 
-            onClick={(e) => { e.stopPropagation(); if (isMobile) setSidebarOpen(false); else setSidebarMini(true); }}
-            title={isMobile ? 'Tutup' : 'Ciutkan Sidebar'}
-          >
-            {isMobile ? Icons.x : Icons.panel}
-          </button>
+          {isMobile && (
+            <button className="sidebar-close-btn" onClick={(e) => { e.stopPropagation(); setSidebarOpen(false); }} title="Tutup">{Icons.x}</button>
+          )}
         </div>
 
         {/* Mini Icons (Gemini-style action stack when collapsed) */}
@@ -1352,13 +1348,11 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
         <div className="particle" /><div className="particle" /><div className="particle" />
         <header className="main-header">
           <div className="main-header-left" style={{ flex: 1 }}>
-            <button 
-              className="header-btn header-sidebar-toggle" 
-              onClick={() => { if (isMobile) setSidebarOpen(!sidebarOpen); else setSidebarMini(!sidebarMini); }} 
-              title={sidebarMini ? 'Perluas Sidebar' : 'Ciutkan Sidebar'}
-            >
-              {Icons.panel}
-            </button>
+            {isMobile && (
+              <button className="header-btn" onClick={() => setSidebarOpen(!sidebarOpen)} style={{ padding: '6px 8px' }} title="Menu">
+                <img src="/sonex logo.png" alt="SONEX" style={{ width: 18, height: 18, borderRadius: 4, objectFit: 'cover' }} />
+              </button>
+            )}
             <div className="header-mode-badge">
               <div className="status-dot" />
               {chatMode === 'trading' ? 'SONEX Neurobro' : 'SONEX AI'}
