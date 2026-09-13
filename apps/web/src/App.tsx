@@ -414,6 +414,13 @@ export default function App() {
   const [showQuotaModal, setShowQuotaModal] = useState(false);
   const [quotaData, setQuotaData] = useState<{ masked: string, status: string, usage: number, free: boolean }[]>([]);
   const [loadingQuota, setLoadingQuota] = useState(false);
+  const [customKeyInput, setCustomKeyInput] = useState(() => {
+    try {
+      return localStorage.getItem('@nova_custom_api_keys') || '';
+    } catch {
+      return '';
+    }
+  });
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
 
   // Fetch available models from OpenRouter
@@ -1850,7 +1857,40 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
                   <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Tier: <strong>{q.free ? 'Free (Teks Aktif)' : 'Standar'}</strong> · Penggunaan: ${q.usage.toFixed(4)}</div>
                 </div>
               ))}
-              <button className="btn-new-chat-full" onClick={loadQuotas} style={{ margin: '8px 0 0' }}>{Icons.refresh} Segarkan</button>
+              <button className="btn-new-chat-full" onClick={loadQuotas} style={{ margin: '8px 0 0' }}>{Icons.refresh} Segarkan Status</button>
+
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--hairline)' }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>🔑 Masukkan API Key OpenRouter Pribadi</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.4 }}>
+                  Ingin menggunakan <strong>GPT-6 Astra, Claude 3.5 Sonnet, GPT-4o</strong> atau model berbayar lainnya? Masukkan API Key OpenRouter pribadi Anda (awalan <code>sk-or-v1-</code>) yang memiliki saldo:
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="password"
+                    placeholder="sk-or-v1-xxxxxxxx..."
+                    value={customKeyInput}
+                    onChange={(e) => setCustomKeyInput(e.target.value)}
+                    style={{ flex: 1, padding: '7px 10px', fontSize: 11.5, borderRadius: 8, border: '1px solid var(--hairline)', background: 'var(--bg-obsidian)', color: 'var(--text-primary)', outline: 'none', fontFamily: 'var(--font-mono)' }}
+                  />
+                  <button
+                    className="btn-new-chat-full"
+                    style={{ width: 'auto', padding: '0 14px', margin: 0, fontSize: 12, height: '34px' }}
+                    onClick={() => {
+                      try {
+                        if (customKeyInput.trim()) {
+                          localStorage.setItem('@nova_custom_api_keys', customKeyInput.trim());
+                        } else {
+                          localStorage.removeItem('@nova_custom_api_keys');
+                        }
+                        loadQuotas();
+                        alert('Kunci API berhasil disimpan!');
+                      } catch {}
+                    }}
+                  >
+                    Simpan
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
