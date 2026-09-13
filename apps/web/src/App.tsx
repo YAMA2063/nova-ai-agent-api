@@ -454,9 +454,10 @@ export default function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const activeSession = sessions.find((s) => s.id === currentSessionId) || sessions[0];
+  const [draftMode, setDraftMode] = useState<'general' | 'trading'>('general');
+  const activeSession = currentSessionId ? (sessions.find((s) => s.id === currentSessionId) || null) : null;
   const messages = activeSession?.messages || [];
-  const chatMode = activeSession?.mode || 'general';
+  const chatMode = activeSession?.mode || draftMode;
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -485,12 +486,17 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed.length > 0) {
-          // Ensure pinned field exists
-          const migrated = parsed.map((s: any) => ({ ...s, pinned: s.pinned || false }));
-          setSessions(migrated);
-          setCurrentSessionId(savedId && migrated.some((s: any) => s.id === savedId) ? savedId : migrated[0].id);
-          return;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Keep only sessions that have at least 1 message
+          const valid = parsed
+            .filter((s: any) => s.messages && s.messages.length > 0)
+            .map((s: any) => ({ ...s, pinned: s.pinned || false }));
+          if (valid.length > 0) {
+            setSessions(valid);
+            const activeIdToUse = savedId && valid.some((s: any) => s.id === savedId) ? savedId : valid[0].id;
+            setCurrentSessionId(activeIdToUse);
+            return;
+          }
         }
       } catch { }
     }
@@ -498,11 +504,12 @@ export default function App() {
   }, []);
 
   const createInitialSession = () => {
-    const s: ChatSession = { id: `s_${Date.now()}`, title: 'Percakapan Baru', createdAt: Date.now(), updatedAt: Date.now(), mode: 'general', pinned: false, messages: [] };
-    setSessions([s]);
-    setCurrentSessionId(s.id);
-    localStorage.setItem(SESSIONS_KEY, JSON.stringify([s]));
-    localStorage.setItem(ACTIVE_SESSION_KEY, s.id);
+    setSessions([]);
+    setCurrentSessionId(null);
+    try {
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify([]));
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+    } catch {}
   };
 
   // FIX: saveSessions now also accepts a functional updater `(prev) => next`.
@@ -514,7 +521,7 @@ export default function App() {
   // finally landed.
   const saveSessions = (
     updater: ChatSession[] | ((prev: ChatSession[]) => ChatSession[]),
-    activeId?: string
+    activeId?: string | null
   ) => {
     setSessions(prev => {
       const updated = typeof updater === 'function' ? (updater as (p: ChatSession[]) => ChatSession[])(prev) : updater;
@@ -525,18 +532,23 @@ export default function App() {
       }
       return updated;
     });
-    if (activeId) {
+    if (activeId !== undefined) {
       setCurrentSessionId(activeId);
       try {
-        localStorage.setItem(ACTIVE_SESSION_KEY, activeId);
+        if (activeId) {
+          localStorage.setItem(ACTIVE_SESSION_KEY, activeId);
+        } else {
+          localStorage.removeItem(ACTIVE_SESSION_KEY);
+        }
       } catch {}
     }
   };
 
-  // Sorted sessions: pinned first
+  // Sorted sessions: pinned first, filtering out sessions without messages
   const sortedSessions = useMemo(() => {
-    const pinned = sessions.filter(s => s.pinned);
-    const unpinned = sessions.filter(s => !s.pinned);
+    const withMessages = sessions.filter(s => s.messages && s.messages.length > 0);
+    const pinned = withMessages.filter(s => s.pinned);
+    const unpinned = withMessages.filter(s => !s.pinned);
     return [...pinned, ...unpinned];
   }, [sessions]);
 
@@ -553,13 +565,20 @@ export default function App() {
 
   // ── Handlers ──
   const handleNewChat = () => {
-    const s: ChatSession = { id: `s_${Date.now()}`, title: 'Percakapan Baru', createdAt: Date.now(), updatedAt: Date.now(), mode: chatMode, pinned: false, messages: [] };
-    saveSessions(prev => [s, ...prev.filter(x => x.pinned), ...prev.filter(x => !x.pinned)], s.id);
+    setCurrentSessionId(null);
+    setInput('');
+    setAttachment(null);
     setSidebarOpen(false);
+    try {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+    } catch {}
   };
 
   const handleToggleMode = (m: 'general' | 'trading') => {
-    saveSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, mode: m } : s));
+    setDraftMode(m);
+    if (currentSessionId) {
+      saveSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, mode: m } : s));
+    }
   };
 
   const handleTogglePin = (id: string) => {
@@ -585,8 +604,12 @@ export default function App() {
       confirmLabel: 'Hapus',
       onConfirm: () => {
         const updated = sessions.filter(s => s.id !== id);
-        if (updated.length === 0) createInitialSession();
-        else saveSessions(updated, currentSessionId === id ? updated[0].id : (currentSessionId || undefined));
+        if (updated.length === 0) {
+          createInitialSession();
+        } else {
+          const nextActiveId = currentSessionId === id ? updated[0].id : currentSessionId;
+          saveSessions(updated, nextActiveId);
+        }
         setConfirmState(p => ({ ...p, open: false }));
       }
     });
@@ -597,7 +620,10 @@ export default function App() {
       open: true, variant: 'danger', title: 'Hapus Semua Riwayat',
       message: `Semua percakapan akan <strong>dihapus permanen</strong> dan tidak dapat dikembalikan.`,
       confirmLabel: 'Hapus Semua',
-      onConfirm: () => { createInitialSession(); setConfirmState(p => ({ ...p, open: false })); }
+      onConfirm: () => {
+        createInitialSession();
+        setConfirmState(p => ({ ...p, open: false }));
+      }
     });
   };
 
@@ -1037,23 +1063,38 @@ export default function App() {
     setBusy(true);
     const userMsg: UiMessage = { id: `u_${Date.now()}`, role: 'user', content: `Analisis Otomatis ${symbol} (Top-Down MTF H4 → M15 → M5)`, timestamp: getFormattedTime() };
     const curMsgs = activeSession ? [...activeSession.messages, userMsg] : [userMsg];
-    // FIX: previously this also called handleToggleMode('trading') right
-    // before this save, which raced against it (both computed from the same
-    // stale `sessions` snapshot and could clobber each other). Setting
-    // mode: 'trading' directly here removes the race and the redundant save.
-    saveSessions(sessions.map(s => s.id === currentSessionId ? { ...s, title: `Analisa ${symbol}`, mode: 'trading', messages: curMsgs } : s));
+    const targetSessionId = activeSession ? activeSession.id : `s_${Date.now()}`;
+    const newTitle = `Analisa ${symbol}`;
+
+    saveSessions(prev => {
+      const exists = prev.some(s => s.id === targetSessionId);
+      if (exists) {
+        return prev.map(s => s.id === targetSessionId ? { ...s, title: newTitle, mode: 'trading', messages: curMsgs, updatedAt: Date.now() } : s);
+      } else {
+        const newSession: ChatSession = {
+          id: targetSessionId,
+          title: newTitle,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          mode: 'trading',
+          messages: curMsgs,
+          pinned: false
+        };
+        return [newSession, ...prev];
+      }
+    }, targetSessionId);
+    setCurrentSessionId(targetSessionId);
+
     try {
       const d = await fetchLiveMarketData(symbol);
       if (!d) throw new Error('Gagal tarik data live.');
       const prompt = `[DATA LIVE BINANCE]: ${d.symbol} $${d.price} (${d.change24h > 0 ? '+' : ''}${d.change24h.toFixed(2)}%) | H4: ${d.h4.trend} | M15 RSI: ${d.m15.rsi} Vol: ${d.m15.volRatio}x | M5: ${d.m5.candle} RSI: ${d.m5.rsi}${d.btcWeather ? ` | BTC: $${d.btcWeather.price.toFixed(0)} (${d.btcWeather.status})` : ''}\n\nLakukan analisis trading Neurobro: Bias H4, Setup M15, Entry M5, R:R >= 1:2, Batas Batal.`;
       const result = await callOpenRouter(curMsgs, prompt, 'trading');
       const aMsg: UiMessage = { id: `a_${Date.now()}`, role: 'assistant', content: result.content, modelUsed: result.model.split('/').pop(), timestamp: getFormattedTime() };
-      // FIX: functional update — append to whatever the session's messages
-      // are *now*, not the `curMsgs` snapshot taken before the network call.
-      saveSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, aMsg] } : s));
+      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, aMsg] } : s));
     } catch (err: any) {
       const eMsg: UiMessage = { id: `e_${Date.now()}`, role: 'assistant', content: `Kendala: ${err?.message || 'Gagal.'}`, modelUsed: 'Error', timestamp: getFormattedTime() };
-      saveSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, eMsg] } : s));
+      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, eMsg] } : s));
     } finally { setBusy(false); }
   };
 
@@ -1111,14 +1152,26 @@ export default function App() {
 
     const userMsg: UiMessage = { id: `u_${Date.now()}`, role: 'user', content: userContent, attachment: attachment || undefined, timestamp: getFormattedTime() };
     const curMsgs = activeSession ? [...activeSession.messages, userMsg] : [userMsg];
-    const targetSessionId = activeSession ? activeSession.id : `session_${Date.now()}`;
+    const targetSessionId = activeSession ? activeSession.id : `s_${Date.now()}`;
     const newTitle = activeSession?.title === 'Percakapan Baru' || !activeSession ? userContent.slice(0, 36) + (userContent.length > 36 ? '…' : '') : activeSession?.title || 'Obrolan';
 
-    saveSessions(
-      sessions.length === 0 ? [{ id: targetSessionId, title: newTitle, createdAt: Date.now(), updatedAt: Date.now(), mode: chatMode, messages: curMsgs, pinned: false }]
-        : sessions.map(s => s.id === targetSessionId ? { ...s, messages: curMsgs, title: newTitle } : s),
-      targetSessionId
-    );
+    saveSessions(prev => {
+      const exists = prev.some(s => s.id === targetSessionId);
+      if (exists) {
+        return prev.map(s => s.id === targetSessionId ? { ...s, messages: curMsgs, title: newTitle, updatedAt: Date.now() } : s);
+      } else {
+        const newSession: ChatSession = {
+          id: targetSessionId,
+          title: newTitle,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          mode: chatMode,
+          messages: curMsgs,
+          pinned: false
+        };
+        return [newSession, ...prev];
+      }
+    }, targetSessionId);
     setCurrentSessionId(targetSessionId);
     setInput(''); setAttachment(null);
     const textarea = document.querySelector('.chat-input-area textarea') as HTMLTextAreaElement;
