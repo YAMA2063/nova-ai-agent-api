@@ -398,11 +398,15 @@ async function callTokenHarborApi(
   }
   messages.push({ role: 'user', content: promptText });
 
+  const baseUrl = (typeof window !== 'undefined' && (window.location.port === '3000' || window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1')))
+    ? '/proxy/tokenharbor/v1/chat/completions'
+    : 'https://tokenharbor.ai/v1/chat/completions';
+
   for (const key of keys) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 35000);
-      const res = await fetch('https://tokenharbor.ai/v1/chat/completions', {
+      const res = await fetch(baseUrl, {
         method: 'POST',
         signal: ctrl.signal,
         headers: {
@@ -453,11 +457,15 @@ async function callSambaNovaApi(
   }
   messages.push({ role: 'user', content: promptText });
 
+  const baseUrl = (typeof window !== 'undefined' && (window.location.port === '3000' || window.location.hostname.includes('localhost') || window.location.hostname.includes('127.0.0.1')))
+    ? '/proxy/sambanova/v1/chat/completions'
+    : 'https://api.sambanova.ai/v1/chat/completions';
+
   for (const key of keys) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 35000);
-      const res = await fetch('https://api.sambanova.ai/v1/chat/completions', {
+      const res = await fetch(baseUrl, {
         method: 'POST',
         signal: ctrl.signal,
         headers: {
@@ -583,9 +591,10 @@ Kamu adalah SONEX, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan m
 2. **Penalaran Logis & Rekayasa Kode**: Pemrograman, analisis teknis, penulisan mendalam.
 3. **Analisis Pasar & Trading (Neurobro)**: Top-down MTF, aksi harga faktual.
 
-## Prinsip Operasional:
+## Prinsip Operasional & Batasan:
 1. Alami, Cerdas, dan Ramah
-2. Informatif, Lugas, dan Solutif`;
+2. Informatif, Lugas, dan Solutif
+3. **Kejujuran Faktual & Larangan Klaim Browsing**: Kamu tidak memiliki alat penjelajah web (live web browsing) di sesi chat ini. JANGAN PERNAH berhalusinasi mengklaim atau menawarkan diri kepada pengguna untuk "mencari atau menjelajah di internet (web browsing)". Jika ada rumor atau pertanyaan tentang sesuatu yang belum rilis/belum ada, jelaskan secara jujur dan faktual apa adanya tanpa menjanjikan pencarian web.`;
 
 const NEUROBRO_TRADING_PROMPT = `# SONEX Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
 
