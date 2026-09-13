@@ -1220,7 +1220,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
             title={sidebarMini ? 'Klik untuk memperluas sidebar' : undefined}
           >
             <div className="brand-emblem">
-              <span className="emblem-logo">{Icons.sonex}</span>
+              <img src="/sonex logo.png" alt="SONEX AI" className="brand-logo-img" />
             </div>
             <div className="sidebar-logo-text">
               <div className="brand-text">SONEX AI</div>
@@ -1323,8 +1323,8 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
             <button className="mini-icon-btn" onClick={() => setIsDark(!isDark)} title={isDark ? 'Mode Terang' : 'Mode Gelap'}>
               {isDark ? Icons.sun : Icons.moon}
             </button>
-            <button className="mini-icon-btn" onClick={() => setSidebarMini(false)} title="Perluas Sidebar">
-              {Icons.panel}
+            <button className="mini-icon-btn danger" onClick={handleClearAll} title="Hapus Riwayat">
+              {Icons.trash}
             </button>
             <div className="status-dot-pulse" title="4 Kunci API · Live" />
           </div>
@@ -1552,7 +1552,9 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
           {/* Welcome Screen */}
           {isWelcome && (
             <div className="welcome-screen">
-              <div className="welcome-logo">{Icons.sonex}</div>
+              <div className="welcome-logo">
+                <img src="/sonex logo.png" alt="SONEX AI" />
+              </div>
               <div className="welcome-title">Selamat Datang di SONEX AI</div>
               <div className="welcome-sub">
                 {chatMode === 'trading'
@@ -1570,7 +1572,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
           {/* Messages */}
           {messages.map((m) => (
             <div key={m.id} className={`message-row ${m.role}`}>
-              {m.role === 'assistant' && <div className="assistant-avatar-circle">{Icons.sonex}</div>}
+              {m.role === 'assistant' && <div className="assistant-avatar-circle"><img src="/sonex logo.png" alt="SONEX" /></div>}
               {m.role === 'user' && <div className="user-avatar-circle">U</div>}
               <div className="message-card">
                 {m.attachment && (
@@ -1598,7 +1600,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
 
           {busy && (
             <div className="thinking-container">
-              <div className="assistant-avatar-circle">{Icons.sonex}</div>
+              <div className="assistant-avatar-circle"><img src="/sonex logo.png" alt="SONEX" /></div>
               <div className="thinking-pill">
                 <div className="typing-dots"><span /><span /><span /></div>
                 <span>SONEX sedang menganalisa…</span>
