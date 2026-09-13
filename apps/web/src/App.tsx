@@ -8,9 +8,8 @@ import './App.css';
 // ============================================================================
 const Icons = {
   sonex: (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="url(#sonexGrad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-      <defs><linearGradient id="sonexGrad" x1="2" y1="2" x2="22" y2="22"><stop stopColor="#8B5CF6"/><stop offset="1" stopColor="#06B6D4"/></linearGradient></defs>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
     </svg>
   ),
   plus: (
@@ -374,7 +373,15 @@ export default function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sidebarMini, setSidebarMini] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(() => {
+    try {
+      const saved = localStorage.getItem('sonex_theme');
+      if (saved) return saved === 'dark';
+      return !window.matchMedia?.('(prefers-color-scheme: light)').matches;
+    } catch {
+      return true;
+    }
+  });
 
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('google/gemini-1.5-pro');
@@ -463,7 +470,12 @@ export default function App() {
 
   // Theme
   useEffect(() => {
+    const theme = isDark ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
     document.body.classList.toggle('light', !isDark);
+    try {
+      localStorage.setItem('sonex_theme', theme);
+    } catch {}
   }, [isDark]);
 
   // Load Sessions
@@ -906,7 +918,7 @@ export default function App() {
             headers: {
               'Authorization': `Bearer ${key}`,
               'Content-Type': 'application/json',
-              'X-Title': 'NOVA AI'
+              'X-Title': 'SONEX AI'
             },
             body: JSON.stringify({
               model: mToTry,
@@ -1200,11 +1212,15 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
       {/* ════════ SIDEBAR ════════ */}
       <aside className={`sidebar ${sidebarMini ? 'mini' : ''} ${sidebarOpen ? 'open' : ''}`}>
         {/* Brand Row */}
-        <div className="sidebar-brand-row" onClick={() => { if (isMobile) setSidebarOpen(!sidebarOpen); else setSidebarMini(!sidebarMini); }} style={{ cursor: 'pointer' }} title={sidebarMini ? 'Buka Sidebar' : 'Tutup Sidebar'}>
-          <div className="brand-logo-group">
+        <div className="sidebar-brand-row">
+          <div 
+            className="brand-logo-group" 
+            onClick={() => { if (sidebarMini) setSidebarMini(false); }}
+            style={{ cursor: sidebarMini ? 'pointer' : 'default' }}
+            title={sidebarMini ? 'Klik untuk memperluas sidebar' : undefined}
+          >
             <div className="brand-emblem">
               <span className="emblem-logo">{Icons.sonex}</span>
-              <span className="emblem-hover-icon">{Icons.panel}</span>
             </div>
             <div className="sidebar-logo-text">
               <div className="brand-text">SONEX AI</div>
@@ -1212,12 +1228,39 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
             </div>
           </div>
           <span className="brand-version">PRO</span>
-          <button className="sidebar-close-btn" onClick={(e) => { e.stopPropagation(); setSidebarOpen(false); }}>{Icons.x}</button>
+          <button 
+            className="sidebar-collapse-btn" 
+            onClick={(e) => { e.stopPropagation(); if (isMobile) setSidebarOpen(false); else setSidebarMini(true); }}
+            title={isMobile ? 'Tutup' : 'Ciutkan Sidebar'}
+          >
+            {isMobile ? Icons.x : Icons.panel}
+          </button>
         </div>
 
-        {/* Mini Icons */}
+        {/* Mini Icons (Gemini-style action stack when collapsed) */}
         <div className="sidebar-mini-icons">
           <button className="mini-icon-btn accent" onClick={handleNewChat} title="Chat Baru">{Icons.plus}</button>
+          <div className="mini-icon-divider" />
+          <button 
+            className={`mini-icon-btn ${chatMode === 'trading' ? 'trading-active' : 'active'}`} 
+            onClick={() => handleToggleMode(chatMode === 'general' ? 'trading' : 'general')} 
+            title={`Mode: ${chatMode === 'trading' ? 'Neurobro Trading' : 'Umum'} (Klik untuk ganti)`}
+          >
+            {chatMode === 'trading' ? Icons.trendingUp : Icons.brain}
+          </button>
+          <button 
+            className={`mini-icon-btn ${showChartPanel ? 'active' : ''}`} 
+            onClick={() => setShowChartPanel(!showChartPanel)} 
+            title={showChartPanel ? 'Tutup Chart' : 'Buka TradingView'}
+          >
+            {showChartPanel ? Icons.eyeOff : Icons.barChart}
+          </button>
+          <button className="mini-icon-btn" onClick={() => setShowSopModal(true)} title="Pedoman (SOP)">
+            {Icons.bookOpen}
+          </button>
+          <button className="mini-icon-btn" onClick={loadQuotas} title="Status Kuota">
+            {Icons.zap}
+          </button>
         </div>
 
         {/* New Chat (Full) */}
@@ -1275,9 +1318,21 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
         </div>
 
         <div className="sidebar-footer">
+          {/* Mini mode footer actions */}
+          <div className="sidebar-mini-footer">
+            <button className="mini-icon-btn" onClick={() => setIsDark(!isDark)} title={isDark ? 'Mode Terang' : 'Mode Gelap'}>
+              {isDark ? Icons.sun : Icons.moon}
+            </button>
+            <button className="mini-icon-btn" onClick={() => setSidebarMini(false)} title="Perluas Sidebar">
+              {Icons.panel}
+            </button>
+            <div className="status-dot-pulse" title="4 Kunci API · Live" />
+          </div>
+
+          {/* Full mode footer actions */}
           <div className="sidebar-footer-actions">
             <button className="btn-footer" onClick={() => setIsDark(!isDark)}>
-              {isDark ? Icons.sun : Icons.moon} Ganti Tema
+              {isDark ? Icons.sun : Icons.moon} {isDark ? 'Mode Terang' : 'Mode Gelap'}
             </button>
             <button className="btn-footer danger" onClick={handleClearAll}>
               {Icons.trash} Hapus Riwayat
@@ -1297,9 +1352,13 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
         <div className="particle" /><div className="particle" /><div className="particle" />
         <header className="main-header">
           <div className="main-header-left" style={{ flex: 1 }}>
-            {isMobile && (
-              <button className="header-btn" onClick={() => setSidebarOpen(!sidebarOpen)} style={{ padding: '6px 8px' }}>{Icons.sonex}</button>
-            )}
+            <button 
+              className="header-btn header-sidebar-toggle" 
+              onClick={() => { if (isMobile) setSidebarOpen(!sidebarOpen); else setSidebarMini(!sidebarMini); }} 
+              title={sidebarMini ? 'Perluas Sidebar' : 'Ciutkan Sidebar'}
+            >
+              {Icons.panel}
+            </button>
             <div className="header-mode-badge">
               <div className="status-dot" />
               {chatMode === 'trading' ? 'SONEX Neurobro' : 'SONEX AI'}
@@ -1483,6 +1542,9 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
             </button>
             <button className="header-btn" onClick={loadQuotas}>{Icons.zap} Kuota</button>
             <button className="header-btn" onClick={() => setShowSopModal(true)}>{Icons.bookOpen} SOP</button>
+            <button className="header-btn" onClick={() => setIsDark(!isDark)} title={isDark ? 'Mode Terang' : 'Mode Gelap'}>
+              {isDark ? Icons.sun : Icons.moon}
+            </button>
           </div>
         </header>
 
@@ -1551,7 +1613,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
             <div className="attachment-preview-capsule">
               {attachment.type === 'image' && <img src={attachment.uri} alt="Thumb" className="attachment-thumb" />}
               {attachment.type === 'video' && <div className="attachment-thumb" style={{ background: '#000', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.film}</div>}
-              {attachment.type === 'audio' && <div className="attachment-thumb" style={{ background: 'var(--surface-3)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mic}</div>}
+              {attachment.type === 'audio' && <div className="attachment-thumb" style={{ background: 'var(--bg-panel-raised)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mic}</div>}
               <div className="attachment-info">
                 <div className="attachment-name">{attachment.name}</div>
                 <div className="attachment-hint">{Icons.check} {attachment.type.toUpperCase()} siap dianalisis</div>
@@ -1585,7 +1647,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
             ))}
           </div>
           <div className="tv-iframe-wrapper">
-            <iframe title="TradingView" src={`https://s.tradingview.com/widgetembed/?frameElementId=tv&symbol=BINANCE:${selectedSymbol}&interval=15&hidesidetoolbar=0&symboledit=1&saveimage=1&toolbarbg=0D111A&theme=dark&style=1&timezone=Asia%2FJakarta`} />
+            <iframe title="TradingView" src={`https://s.tradingview.com/widgetembed/?frameElementId=tv&symbol=BINANCE:${selectedSymbol}&interval=15&hidesidetoolbar=0&symboledit=1&saveimage=1&toolbarbg=${isDark ? '0D111A' : 'F1F4F8'}&theme=${isDark ? 'dark' : 'light'}&style=1&timezone=Asia%2FJakarta`} />
           </div>
           <div className="mtf-dashboard-section">
             {marketStats && (
