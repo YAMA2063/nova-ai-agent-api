@@ -384,7 +384,15 @@ export default function App() {
   });
 
   const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState('google/gemini-1.5-pro');
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('sonex_selected_model');
+      if (saved) return saved;
+    } catch {}
+    return 'openrouter/free';
+  });
+  const [modelSearch, setModelSearch] = useState('');
+  const [onlyFree, setOnlyFree] = useState(false);
   const [availableModels, setAvailableModels] = useState<ORModel[]>([]);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [modelTab, setModelTab] = useState<'all' | 'text' | 'image' | 'video' | 'audio'>('all');
@@ -551,6 +559,52 @@ export default function App() {
     const unpinned = withMessages.filter(s => !s.pinned);
     return [...pinned, ...unpinned];
   }, [sessions]);
+
+  const handleSelectModel = (modelId: string) => {
+    setSelectedModel(modelId);
+    setIsModelDropdownOpen(false);
+    try {
+      localStorage.setItem('sonex_selected_model', modelId);
+    } catch {}
+  };
+
+  const filteredModels = useMemo(() => {
+    return availableModels.filter(m => {
+      // Modality filter
+      if (modelTab !== 'all') {
+        if (modelTab === 'audio') {
+          if (!m.outputModalities.includes('audio') && !m.outputModalities.includes('speech')) return false;
+        } else if (!m.outputModalities.includes(modelTab)) {
+          return false;
+        }
+      }
+      // Only free filter
+      const isFree = m.id.endsWith(':free') || m.pricing.prompt === '0' || m.pricing.prompt === '0.0';
+      if (onlyFree && !isFree) return false;
+
+      // Search query filter
+      if (modelSearch.trim()) {
+        const q = modelSearch.toLowerCase();
+        const matchId = m.id.toLowerCase().includes(q);
+        const matchName = m.name.toLowerCase().includes(q);
+        if (!matchId && !matchName) return false;
+      }
+      return true;
+    }).sort((a, b) => {
+      const aFree = a.id.endsWith(':free') || a.pricing.prompt === '0' || a.pricing.prompt === '0.0';
+      const bFree = b.id.endsWith(':free') || b.pricing.prompt === '0' || b.pricing.prompt === '0.0';
+      if (!modelSearch && aFree !== bFree) return aFree ? -1 : 1;
+
+      if (modelSort === 'newest') return b.created - a.created;
+      if (modelSort === 'oldest') return a.created - b.created;
+      if (modelSort === 'weekly') {
+        const scoreA = (a.contextLength || 1) / (parseFloat(a.pricing.prompt) || 0.1);
+        const scoreB = (b.contextLength || 1) / (parseFloat(b.pricing.prompt) || 0.1);
+        return scoreB - scoreA;
+      }
+      return 0;
+    });
+  }, [availableModels, modelTab, onlyFree, modelSearch, modelSort]);
 
   // Live market stats
   useEffect(() => {
@@ -725,12 +779,18 @@ export default function App() {
   const handleQuickReply = (text: string) => { setInput(text); };
 
   // ── API Call ──
-  const callOpenRouter = async (history: UiMessage[], promptText: string, cMode: 'general' | 'trading', attach?: MediaAttachment) => {
+  const callOpenRouter = async (
+    history: UiMessage[],
+    promptText: string,
+    cMode: 'general' | 'trading',
+    targetModel: string = selectedModel,
+    attach?: MediaAttachment
+  ) => {
     let content: any = promptText;
     
     // Check if this is an image generation request
     if (promptText.startsWith('/imagine ')) {
-      return callOpenRouterImageGen(promptText.slice(9).trim(), IMAGE_MODEL);
+      return callOpenRouterImageGen(promptText.slice(9).trim(), targetModel);
     }
 
     if (attach?.base64) { 
@@ -747,47 +807,89 @@ export default function App() {
     
     const clean = history.filter(m => !m.content.startsWith('Kendala:') && m.id !== 'init_welcome').map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
     const msgs = [{ role: 'system', content: cMode === 'trading' ? NEUROBRO_TRADING_PROMPT : GENERAL_SYSTEM_PROMPT }, ...clean, { role: 'user', content }];
-    let lastErr: any = null;
-
-    // Detect if current selectedModel outputs text, otherwise find text fallback
-    let primaryTextModel = selectedModel;
-    const currObj = availableModels.find(m => m.id === selectedModel);
+    
+    // Explicit model chosen by the user
+    let primaryTextModel = targetModel || selectedModel || 'openrouter/free';
+    const currObj = availableModels.find(m => m.id === primaryTextModel);
     if (currObj && !currObj.outputModalities.includes('text')) {
       const candidate = availableModels.find(m => m.outputModalities.includes('text') && (m.id.includes(':free') || m.id.includes('gemini') || m.id.includes('flash')));
-      primaryTextModel = candidate ? candidate.id : 'inclusionai/ling-3.0-flash-vl:free';
+      primaryTextModel = candidate ? candidate.id : 'openrouter/free';
     }
 
-    const candidateModels = Array.from(new Set([
-      primaryTextModel,
-      'inclusionai/ling-3.0-flash-vl:free',
-      'nex-agi/nex-n2.5-mini:free',
-      'liquid/lfm-2.5-2.6b:free'
-    ]));
+    let lastErr: any = null;
+    let isQuotaOrAuthIssue = false;
 
+    // 1. Primary execution: try the EXACT model chosen by the user with all available keys
     for (const key of getOpenRouterKeys()) {
-      for (const mToTry of candidateModels) {
-        try {
-          const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 35000);
-          const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-            method: 'POST',
-            signal: ctrl.signal,
-            headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'SONEX AI' },
-            body: JSON.stringify({ model: mToTry, temperature: cMode === 'trading' ? 0.15 : 0.4, max_tokens: 2500, messages: msgs })
-          });
-          clearTimeout(timer);
-          if (res.ok) {
-            const data = await res.json();
-            const reply = data.choices?.[0]?.message?.content;
-            if (reply) return { content: reply, model: data.model || mToTry };
-          } else {
-            if (res.status === 401 || res.status === 402) {
-              lastErr = new Error(`HTTP ${res.status}: Kuota/kredit model tersebut tidak mencukupi di OpenRouter.`);
-            }
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 40000);
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          signal: ctrl.signal,
+          headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'SONEX AI' },
+          body: JSON.stringify({ model: primaryTextModel, temperature: cMode === 'trading' ? 0.15 : 0.4, max_tokens: 2500, messages: msgs })
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const data = await res.json();
+          const reply = data.choices?.[0]?.message?.content;
+          if (reply) return { content: reply, model: data.model || primaryTextModel };
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          const errMsg = errData.error?.message || `HTTP ${res.status}`;
+          if (res.status === 401 || res.status === 402 || errMsg.toLowerCase().includes('credit') || errMsg.toLowerCase().includes('payment')) {
+            isQuotaOrAuthIssue = true;
           }
-        } catch (e: any) { lastErr = e; }
+          lastErr = new Error(errMsg);
+        }
+      } catch (e: any) {
+        lastErr = e;
       }
     }
-    throw lastErr || new Error('Gagal menghubungi OpenRouter.');
+
+    // 2. If user-selected model required paid balance that the current free keys don't have,
+    // gracefully route to top verified free models while transparently explaining to the user.
+    if (isQuotaOrAuthIssue) {
+      const freeFallbacks = [
+        'openrouter/free',
+        'nex-agi/nex-n2.5-pro:free',
+        'nvidia/nemotron-3.5-lightning:free',
+        'google/gemma-4-26b-a4b-it:free',
+        'inclusionai/ling-3.0-flash-vl:free'
+      ];
+      for (const key of getOpenRouterKeys()) {
+        for (const fbModel of freeFallbacks) {
+          if (fbModel === primaryTextModel) continue;
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 35000);
+            const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              signal: ctrl.signal,
+              headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'SONEX AI' },
+              body: JSON.stringify({ model: fbModel, temperature: cMode === 'trading' ? 0.15 : 0.4, max_tokens: 2500, messages: msgs })
+            });
+            clearTimeout(timer);
+            if (res.ok) {
+              const data = await res.json();
+              const reply = data.choices?.[0]?.message?.content;
+              if (reply) {
+                const chosenName = currObj?.name || primaryTextModel;
+                const fbName = availableModels.find(m => m.id === fbModel)?.name || fbModel.split('/').pop() || fbModel;
+                const notice = `> ⚠️ **Pemberitahuan Model**: Model pilihan Anda (**${chosenName}**) membutuhkan saldo/kredit berbayar di OpenRouter. Karena kunci aktif berada di Free Tier, respon ini dialihkan ke **${fbName}**.\n> *(Pilih model berlabel **🎁 FREE** di dropdown tengah untuk eksekusi gratis tanpa peringatan ini, atau tambahkan API key Anda di menu Status Kuota)*\n\n---\n\n`;
+                return {
+                  content: notice + reply,
+                  model: fbModel
+                };
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+
+    throw lastErr || new Error(`Gagal menghubungi model ${primaryTextModel}.`);
   };
 
   const enhanceImagePrompt = async (rawPrompt: string): Promise<string> => {
@@ -1089,7 +1191,7 @@ export default function App() {
       const d = await fetchLiveMarketData(symbol);
       if (!d) throw new Error('Gagal tarik data live.');
       const prompt = `[DATA LIVE BINANCE]: ${d.symbol} $${d.price} (${d.change24h > 0 ? '+' : ''}${d.change24h.toFixed(2)}%) | H4: ${d.h4.trend} | M15 RSI: ${d.m15.rsi} Vol: ${d.m15.volRatio}x | M5: ${d.m5.candle} RSI: ${d.m5.rsi}${d.btcWeather ? ` | BTC: $${d.btcWeather.price.toFixed(0)} (${d.btcWeather.status})` : ''}\n\nLakukan analisis trading Neurobro: Bias H4, Setup M15, Entry M5, R:R >= 1:2, Batas Batal.`;
-      const result = await callOpenRouter(curMsgs, prompt, 'trading');
+      const result = await callOpenRouter(curMsgs, prompt, 'trading', selectedModel);
       const aMsg: UiMessage = { id: `a_${Date.now()}`, role: 'assistant', content: result.content, modelUsed: result.model.split('/').pop(), timestamp: getFormattedTime() };
       saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, aMsg] } : s));
     } catch (err: any) {
@@ -1115,6 +1217,12 @@ export default function App() {
       return;
     }
 
+    // Modal check on the user-selected model
+    const currentModelObj = availableModels.find(m => m.id === selectedModel);
+    const hasImageModality = Boolean(currentModelObj?.outputModalities?.includes('image'));
+    const hasVideoModality = Boolean(currentModelObj?.outputModalities?.includes('video'));
+    const hasAudioModality = Boolean(currentModelObj?.outputModalities?.includes('audio') || currentModelObj?.outputModalities?.includes('speech'));
+
     // Smart Intent Detection for Image Generation
     const isImagineCommand = trimmed.startsWith('/imagine ');
     const isVideo = trimmed.startsWith('/video ');
@@ -1136,14 +1244,12 @@ export default function App() {
 
     if (isImagineCommand) {
       userContent = trimmed.slice(9).trim();
-      const curr = availableModels.find(m => m.id === selectedModel);
-      if (!curr?.outputModalities.includes('image')) {
+      if (!hasImageModality) {
         finalModel = IMAGE_MODEL;
       }
     } else if (isImperativeDraw) {
       userContent = trimmed;
-      const curr = availableModels.find(m => m.id === selectedModel);
-      if (!curr?.outputModalities.includes('image')) {
+      if (!hasImageModality) {
         finalModel = IMAGE_MODEL;
       }
     } else if (isVideo) {
@@ -1179,11 +1285,9 @@ export default function App() {
     setBusy(true);
 
     // Loading message for Heavy generation
-    const currentModelObj = availableModels.find(m => m.id === finalModel);
-    const isSelectedImageOnly = !!(currentModelObj?.outputModalities.includes('image') && !currentModelObj.outputModalities.includes('text'));
-    const isVideoModel = currentModelObj?.outputModalities.includes('video') || isVideo;
-    const isImageModel = isImageIntent || (isSelectedImageOnly && !isQuestionOrMeta);
-    const isAudioModel = currentModelObj?.outputModalities.includes('audio');
+    const isVideoModel = isVideo || hasVideoModality;
+    const isImageModel = isImageIntent || (hasImageModality && !isQuestionOrMeta);
+    const isAudioModel = hasAudioModality && !hasImageModality;
 
     if (isVideoModel) {
       const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎬 *Sedang merender video (Mohon tunggu, ini dapat memakan waktu beberapa menit)...*', modelUsed: finalModel, timestamp: getFormattedTime() };
@@ -1192,7 +1296,7 @@ export default function App() {
       const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎨 *Sedang menggambar...*', modelUsed: finalModel, timestamp: getFormattedTime() };
       saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, waitMsg] } : s));
     } else if (isAudioModel) {
-      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎙️ *Sedang mensintesis suara...*', modelUsed: selectedModel, timestamp: getFormattedTime() };
+      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎙️ *Sedang mensintesis suara...*', modelUsed: finalModel, timestamp: getFormattedTime() };
       saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, waitMsg] } : s));
     }
 
@@ -1221,11 +1325,11 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
 👉 atau gunakan format \`/imagine [deskripsi kamu]\`
 
 *Ketik salah satu contoh di atas, dan AI akan langsung merender gambarnya untuk Anda!*`,
-          model: 'Google Gemini 3.1 Flash Image'
+          model: finalModel
         };
       } else {
-        // Text model
-        result = await callOpenRouter(curMsgs, userContent, chatMode);
+        // Text model - Execute with chosen model!
+        result = await callOpenRouter(curMsgs, userContent, chatMode, finalModel);
       }
       const aMsg: UiMessage = { id: `a_${Date.now()}`, role: 'assistant', content: result.content, modelUsed: result.model.split('/').pop(), timestamp: getFormattedTime() };
       
@@ -1427,20 +1531,27 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
               <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
                 {availableModels.find(m => m.id === selectedModel)?.name || selectedModel.split('/').pop() || 'Loading Models...'}
               </span>
+              {(selectedModel.includes(':free') || availableModels.find(m => m.id === selectedModel)?.pricing?.prompt === '0') && (
+                <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '10px', background: 'rgba(6,182,212,0.15)', color: 'var(--accent-secondary)' }}>FREE</span>
+              )}
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isModelDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.6 }}>
                 <polyline points="6 9 12 15 18 9"></polyline>
               </svg>
             </button>
 
             {isModelDropdownOpen && (
-              <div className="model-dropdown-menu" style={{ position: 'absolute', top: 'calc(100% + 12px)', left: '50%', transform: 'translateX(-50%)', zIndex: 100, background: 'var(--glass-bg-strong)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid var(--glass-border)', borderRadius: '16px', maxHeight: '500px', width: '340px', overflowY: 'auto', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column' }}>
-                <div className="model-dropdown-header" style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', position: 'sticky', top: 0, background: 'transparent', zIndex: 10, backdropFilter: 'blur(24px)' }}>
-                  <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>Omnimodal Models</span>
+              <div 
+                className="model-dropdown-menu" 
+                onClick={(e) => e.stopPropagation()}
+                style={{ position: 'absolute', top: 'calc(100% + 12px)', left: '50%', transform: 'translateX(-50%)', zIndex: 100, background: 'var(--glass-bg-strong)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid var(--glass-border)', borderRadius: '16px', maxHeight: '520px', width: '360px', overflowY: 'auto', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column' }}
+              >
+                <div className="model-dropdown-header" style={{ padding: '12px 14px', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', position: 'sticky', top: 0, background: 'var(--bg-panel-raised)', zIndex: 10, backdropFilter: 'blur(24px)' }}>
+                  <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 700 }}>Pilih Model AI</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
                       <button 
                         onClick={(e) => { e.stopPropagation(); setIsSortDropdownOpen(!isSortDropdownOpen); }}
-                        style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: '12px', fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: '11.5px', fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                       >
                         {modelSort === 'popular' && 'Most Popular'}
                         {modelSort === 'newest' && 'Newest'}
@@ -1470,73 +1581,59 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
                           ))}
                         </div>
                       )}
-                      <span style={{color: 'var(--text-muted)', fontWeight: 500, fontSize: '12px'}}>{availableModels.length}</span>
+                      <span style={{color: 'var(--text-muted)', fontWeight: 500, fontSize: '12px'}}>{filteredModels.length}</span>
                     </div>
                   </div>
-                  
-                  {/* Modality Tabs */}
-                  <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
-                    {['all', 'text', 'image', 'video', 'audio'].map(tab => {
-                      let count = availableModels.length;
-                      let filteredModels = availableModels;
-                      
-                      if (tab !== 'all') {
-                        filteredModels = availableModels.filter(m => {
-                          if (tab === 'audio') return m.outputModalities.includes('audio') || m.outputModalities.includes('speech');
-                          return m.outputModalities.includes(tab);
-                        });
-                        count = filteredModels.length;
-                      }
-                      
-                      return (
-                        <button 
-                          key={tab} 
-                          className={`model-tab-btn ${modelTab === tab ? 'active' : ''}`} 
-                          onClick={(e) => { 
-                            e.stopPropagation(); 
-                            setModelTab(tab as any);
-                            // Auto switch model when tab changes
-                            if (filteredModels.length > 0) {
-                              const newTopModel = filteredModels.sort((a, b) => {
-                                if (modelSort === 'newest') return b.created - a.created;
-                                if (modelSort === 'oldest') return a.created - b.created;
-                                if (modelSort === 'weekly') {
-                                   const scoreA = (a.contextLength || 1) / (parseFloat(a.pricing.prompt) || 0.1);
-                                   const scoreB = (b.contextLength || 1) / (parseFloat(b.pricing.prompt) || 0.1);
-                                   return scoreB - scoreA;
-                                }
-                                return 0;
-                              })[0];
-                              setSelectedModel(newTopModel.id);
-                            }
-                          }}
-                        >
-                          {tab.charAt(0).toUpperCase() + tab.slice(1)} {count > 0 && <span className="tab-count">{count}</span>}
-                        </button>
-                      );
-                    })}
+
+                  {/* Search box */}
+                  <div style={{ position: 'relative', marginBottom: 8 }}>
+                    <input 
+                      type="text" 
+                      placeholder="Cari model (misal: gemma, nex, free, claude)..." 
+                      value={modelSearch} 
+                      onChange={(e) => setModelSearch(e.target.value)} 
+                      onClick={(e) => e.stopPropagation()} 
+                      style={{ width: '100%', padding: '6px 26px 6px 28px', fontSize: '11.5px', borderRadius: '8px', border: '1px solid var(--hairline)', background: 'var(--bg-obsidian)', color: 'var(--text-primary)', outline: 'none' }} 
+                    />
+                    <span style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', opacity: 0.5, fontSize: '12px' }}>🔍</span>
+                    {modelSearch && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setModelSearch(''); }} 
+                        style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '12px' }}
+                      >✕</button>
+                    )}
+                  </div>
+
+                  {/* Modality Tabs & Free Toggle */}
+                  <div style={{ display: 'flex', gap: 5, overflowX: 'auto', paddingBottom: 2, scrollbarWidth: 'none', alignItems: 'center' }}>
+                    <button 
+                      className={`model-tab-btn ${onlyFree ? 'active' : ''}`}
+                      onClick={(e) => { e.stopPropagation(); setOnlyFree(!onlyFree); }}
+                      style={{ borderColor: onlyFree ? 'transparent' : 'rgba(6,182,212,0.4)', color: onlyFree ? '#FFF' : 'var(--accent-secondary)' }}
+                    >
+                      🎁 Free Only
+                    </button>
+                    <div style={{ width: 1, height: 16, background: 'var(--hairline)', margin: '0 2px' }} />
+                    {['all', 'text', 'image', 'video', 'audio'].map(tab => (
+                      <button 
+                        key={tab} 
+                        className={`model-tab-btn ${modelTab === tab ? 'active' : ''}`} 
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          setModelTab(tab as any);
+                        }}
+                      >
+                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                {availableModels.length === 0 ? (
-                  <div style={{ padding: '24px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Mencari model...</div>
+                {filteredModels.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Tidak ada model yang cocok.</div>
                 ) : (
-                  availableModels.filter(m => {
-                    if (modelTab === 'all') return true;
-                    if (modelTab === 'audio') return m.outputModalities.includes('audio') || m.outputModalities.includes('speech');
-                    return m.outputModalities.includes(modelTab);
-                  }).sort((a, b) => {
-                    if (modelSort === 'newest') return b.created - a.created;
-                    if (modelSort === 'oldest') return a.created - b.created;
-                    if (modelSort === 'weekly') {
-                       // OpenRouter doesn't expose Top Weekly natively in API, simulating with price/context combo for now to match UI layout
-                       const scoreA = (a.contextLength || 1) / (parseFloat(a.pricing.prompt) || 0.1);
-                       const scoreB = (b.contextLength || 1) / (parseFloat(b.pricing.prompt) || 0.1);
-                       return scoreB - scoreA;
-                    }
-                    return 0; // Default (Popular) is already sorted by OpenRouter
-                  }).map(m => {
-                    const isFree = m.pricing.prompt === '0' || m.pricing.prompt === '0.0';
+                  filteredModels.map(m => {
+                    const isFree = m.id.endsWith(':free') || m.pricing.prompt === '0' || m.pricing.prompt === '0.0';
                     
                     const formatPrice = (p: string) => {
                       const num = parseFloat(p);
@@ -1558,7 +1655,10 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
                       <button
                         key={m.id}
                         className={`model-card-item ${selectedModel === m.id ? 'active' : ''}`}
-                        onClick={() => { setSelectedModel(m.id); setIsModelDropdownOpen(false); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectModel(m.id);
+                        }}
                       >
                         <div className="model-card-title-row">
                           <span className="model-card-title">{m.name}</span>
