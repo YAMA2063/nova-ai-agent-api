@@ -7,8 +7,11 @@ import './App.css';
 // SVG ICON SYSTEM
 // ============================================================================
 const Icons = {
-  nova: (
-    <img src="/nova%20logo.png" alt="NOVA" className="brand-logo-img" />
+  sonex: (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="url(#sonexGrad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <defs><linearGradient id="sonexGrad" x1="2" y1="2" x2="22" y2="22"><stop stopColor="#8B5CF6"/><stop offset="1" stopColor="#06B6D4"/></linearGradient></defs>
+    </svg>
   ),
   plus: (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -271,12 +274,12 @@ export function getOpenRouterKeys(): string[] {
 const SESSIONS_KEY = '@nova_web_sessions_v2';
 const ACTIVE_SESSION_KEY = '@nova_web_active_id_v2';
 
-const GENERAL_SYSTEM_PROMPT = `# Identitas & Kapabilitas NOVA (General Intelligence)
-Kamu adalah NOVA, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan multimodal lengkap.
+const GENERAL_SYSTEM_PROMPT = `# Identitas & Kapabilitas SONEX AI (General Intelligence)
+Kamu adalah SONEX, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan multimodal lengkap.
 
 ## Kapabilitas Utama:
 1. **Pembuatan Gambar AI Langsung (Image Generation)**:
-   - NOVA terintegrasi dengan generator gambar AI mutakhir (Google Gemini 3.1 Flash Image & Studio Realism).
+   - SONEX terintegrasi dengan generator gambar AI mutakhir (Google Gemini 3.1 Flash Image & Studio Realism).
    - Kamu BISA dan MAMPU menghasilkan gambar visual langsung di dalam obrolan!
    - Jika pengguna bertanya apakah kamu bisa membuat gambar atau gambar apa saja yang bisa kamu buat: Jelaskan dengan antusias bahwa kamu BISA membuat gambar (seperti potret fotorealistis, anime, ilustrasi 3D, pemandangan, logo, seni cyberpunk, dll.) dan ajak pengguna untuk mencobanya dengan mengetik perintah "buat gambar [deskripsi]" atau "/imagine [deskripsi]".
    - JANGAN PERNAH mengatakan bahwa kamu adalah "asisten berbasis teks yang tidak bisa membuat gambar".
@@ -287,7 +290,7 @@ Kamu adalah NOVA, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan mu
 1. Alami, Cerdas, dan Ramah
 2. Informatif, Lugas, dan Solutif`;
 
-const NEUROBRO_TRADING_PROMPT = `# NOVA Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
+const NEUROBRO_TRADING_PROMPT = `# SONEX Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
 
 const IMAGE_MODEL = 'google/gemini-3.1-flash-image';
 const TTS_MODEL = 'openai/tts-1';
@@ -730,7 +733,7 @@ export default function App() {
           const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             signal: ctrl.signal,
-            headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'NOVA Web' },
+            headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'SONEX AI' },
             body: JSON.stringify({ model: mToTry, temperature: cMode === 'trading' ? 0.15 : 0.4, max_tokens: 2500, messages: msgs })
           });
           clearTimeout(timer);
@@ -859,7 +862,7 @@ export default function App() {
             headers: {
               'Authorization': `Bearer ${key}`,
               'Content-Type': 'application/json',
-              'X-Title': 'NOVA AI'
+              'X-Title': 'SONEX AI'
             },
             body: JSON.stringify({
               model,
@@ -1138,7 +1141,7 @@ export default function App() {
         result = await callOpenRouterSpeechGen(userContent, finalModel);
       } else if (isImageCapabilityQuestion) {
         result = {
-          content: `🎨 **Tentu saja bisa!** NOVA terintegrasi langsung dengan model pembuat gambar AI mutakhir dari Google (**Google Gemini 3.1 Flash Image & Gemini 2.5 Flash Image**) untuk menghasilkan karya visual fotorealistis 4K langsung di dalam chat tanpa watermark.
+          content: `🎨 **Tentu saja bisa!** SONEX terintegrasi langsung dengan model pembuat gambar AI mutakhir untuk menghasilkan karya visual fotorealistis 4K langsung di dalam chat tanpa watermark.
 
 Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
 1. **Fotorealistis Ultra HD** — Mobil sport mewah, pemandangan kota malam bertabur neon, potret manusia hidup, hewan, arsitektur sinematik.
@@ -1152,7 +1155,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
 👉 \`buat gambar seekor kucing cyberpunk dengan kacamata neon di malam hari\`
 👉 atau gunakan format \`/imagine [deskripsi kamu]\`
 
-*Ketik salah satu contoh di atas, dan Google Gemini akan langsung merender gambarnya untuk Anda!*`,
+*Ketik salah satu contoh di atas, dan AI akan langsung merender gambarnya untuk Anda!*`,
           model: 'Google Gemini 3.1 Flash Image'
         };
       } else {
@@ -1200,12 +1203,12 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
         <div className="sidebar-brand-row" onClick={() => { if (isMobile) setSidebarOpen(!sidebarOpen); else setSidebarMini(!sidebarMini); }} style={{ cursor: 'pointer' }} title={sidebarMini ? 'Buka Sidebar' : 'Tutup Sidebar'}>
           <div className="brand-logo-group">
             <div className="brand-emblem">
-              <span className="emblem-logo">{Icons.nova}</span>
+              <span className="emblem-logo">{Icons.sonex}</span>
               <span className="emblem-hover-icon">{Icons.panel}</span>
             </div>
             <div className="sidebar-logo-text">
-              <div className="brand-text">NOVA AI</div>
-              <div className="brand-subtitle">Trading & Intelligence</div>
+              <div className="brand-text">SONEX AI</div>
+              <div className="brand-subtitle">Intelligence & Trading</div>
             </div>
           </div>
           <span className="brand-version">PRO</span>
@@ -1289,14 +1292,17 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
 
       {/* ════════ MAIN ARENA ════════ */}
       <main className="main-arena">
+        {/* Floating Particles */}
+        <div className="particle" /><div className="particle" /><div className="particle" />
+        <div className="particle" /><div className="particle" /><div className="particle" />
         <header className="main-header">
           <div className="main-header-left" style={{ flex: 1 }}>
             {isMobile && (
-              <button className="header-btn" onClick={() => setSidebarOpen(!sidebarOpen)} style={{ padding: '6px 8px' }}>{Icons.nova}</button>
+              <button className="header-btn" onClick={() => setSidebarOpen(!sidebarOpen)} style={{ padding: '6px 8px' }}>{Icons.sonex}</button>
             )}
             <div className="header-mode-badge">
               <div className="status-dot" />
-              {chatMode === 'trading' ? 'NOVA Neurobro' : 'NOVA AI'}
+              {chatMode === 'trading' ? 'SONEX Neurobro' : 'SONEX AI'}
             </div>
           </div>
 
@@ -1484,12 +1490,12 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
           {/* Welcome Screen */}
           {isWelcome && (
             <div className="welcome-screen">
-              <div className="welcome-logo">{Icons.nova}</div>
-              <div className="welcome-title">Selamat Datang!</div>
+              <div className="welcome-logo">{Icons.sonex}</div>
+              <div className="welcome-title">Selamat Datang di SONEX AI</div>
               <div className="welcome-sub">
                 {chatMode === 'trading'
-                  ? 'NOVA Trading Neurobro siap menganalisis chart dengan SOP baku Top-Down MTF. Pilih topik atau ketik pertanyaan.'
-                  : 'Saya NOVA, asisten AI mutakhir. Tanyakan apa saja seputar kode, logika, atau kirim gambar untuk dianalisis.'}
+                  ? 'SONEX Trading Neurobro siap menganalisis chart dengan SOP baku Top-Down MTF. Pilih topik atau ketik pertanyaan.'
+                  : 'Asisten AI otonom mutakhir. Tanyakan apa saja seputar kode, logika, buat gambar, atau kirim media untuk dianalisis.'}
               </div>
               <div className="quick-replies">
                 {(chatMode === 'trading' ? tradingQuickReplies : generalQuickReplies).map((text) => (
@@ -1502,7 +1508,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
           {/* Messages */}
           {messages.map((m) => (
             <div key={m.id} className={`message-row ${m.role}`}>
-              {m.role === 'assistant' && <div className="assistant-avatar-circle">{Icons.nova}</div>}
+              {m.role === 'assistant' && <div className="assistant-avatar-circle">{Icons.sonex}</div>}
               {m.role === 'user' && <div className="user-avatar-circle">U</div>}
               <div className="message-card">
                 {m.attachment && (
@@ -1530,10 +1536,10 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
 
           {busy && (
             <div className="thinking-container">
-              <div className="assistant-avatar-circle">{Icons.nova}</div>
+              <div className="assistant-avatar-circle">{Icons.sonex}</div>
               <div className="thinking-pill">
                 <div className="typing-dots"><span /><span /><span /></div>
-                <span>NOVA sedang menganalisa…</span>
+                <span>SONEX sedang menganalisa…</span>
               </div>
             </div>
           )}
@@ -1619,8 +1625,8 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
           <div className="modal-dialog" onClick={e => e.stopPropagation()}>
             <div className="modal-header"><div><div className="modal-title">Status Kuota & Engine AI</div></div><button className="modal-close-btn" onClick={() => setShowQuotaModal(false)}>{Icons.x}</button></div>
             <div className="modal-body">
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5, background: 'rgba(255,255,255,0.03)', padding: 10, borderRadius: 8, border: '1px solid var(--border-color)' }}>
-                ℹ️ <strong>Status Kuota:</strong> Kunci OpenRouter aktif (200 OK) untuk model obrolan teks. Untuk pembuatan gambar, NOVA otomatis mengaktifkan <strong>High-Res FLUX Engine</strong> agar Anda dapat menghasilkan gambar tanpa batas kuota berbayar!
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5, background: 'rgba(255,255,255,0.03)', padding: 10, borderRadius: 8, border: '1px solid var(--hairline)' }}>
+                ℹ️ <strong>Status Kuota:</strong> Kunci OpenRouter aktif (200 OK) untuk model obrolan teks. Model gambar yang dipilih di dropdown akan digunakan secara langsung saat generate gambar.
               </div>
               {loadingQuota ? <div style={{ textAlign: 'center', padding: 24, color: 'var(--accent-primary-hover)' }}>Memeriksa kunci API...</div> : quotaData.map((q, i) => (
                 <div key={i} className={`quota-key-box ${q.status === '200 OK' ? 'active' : ''}`}>
