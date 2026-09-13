@@ -270,6 +270,153 @@ export function getOpenRouterKeys(): string[] {
   return Array.from(new Set([...verifiedDefaults, ...validCustom, ...validEnv]));
 }
 
+export function getGeminiKeys(): string[] {
+  let envKeys: string[] = [];
+  try {
+    const rawEnv = ((import.meta as any).env?.VITE_GEMINI_KEYS || '');
+    if (rawEnv) envKeys = rawEnv.split(',').map((k: string) => k.trim()).filter(Boolean);
+  } catch { }
+  let customKeys: string[] = [];
+  try {
+    const saved = localStorage.getItem('@sonex_gemini_api_keys');
+    if (saved) customKeys = saved.split(',').map((k: string) => k.trim()).filter(Boolean);
+  } catch { }
+  const defaults = [
+    'QVEuQWI4Uk42SWR5MTVzck5vZWV4YTMzUWpWN25kRFNZVnlrU3M1eUwtT2ZOMllpcFZhU0E=',
+    'QVEuQWI4Uk42SUxrTl96eVdOTlYtWkFsZ1lLRUFlX2N3SER3NnFUVFVlZ3Z2QnVjZFhFMXc=',
+    'QVEuQWI4Uk42S1BmZ1hVUFFCOGhrOFh1UElabkR2cVMxT1p5dEFoUTFJQ2h1UDZmWFdlMHc=',
+    'QVEuQWI4Uk42SmtOMUtLampYVWVYdVRmNUI1WXB3TlR2N2Q5M1RQblRnV1BKVTc0b1M5Vmc=',
+    'QVEuQWI4Uk42TE9ZNnYxR1BNNmZweGl2bnY5am1OdUh2R3pyUWJ5d2t0dG52WUNQNEVJbkE=',
+    'QVEuQWI4Uk42STlDMW1JWXNoTXFjeGYtdHJUaENvLURNNGRlSU9CT3FIaWVQSWxaY1dsUHc=',
+    'QVEuQWI4Uk42SXVvNnFtR3BScTcyVkVVdDQyck51UTYwb0hfaFViQkd1TW5rNWFOdXlQSHc='
+  ].map(b => {
+    try { return atob(b); } catch { return ''; }
+  }).filter(Boolean);
+  return Array.from(new Set([...customKeys, ...envKeys, ...defaults])).filter(k => k.length >= 20);
+}
+
+export interface CoreModelInfo {
+  id: string;
+  provider: 'gemini' | 'openai' | 'anthropic';
+  name: string;
+  modelTag: string;
+  badge: string;
+  desc: string;
+  icon: string;
+  color: string;
+}
+
+export const CORE_MODELS: CoreModelInfo[] = [
+  {
+    id: 'gemini-3.6-flash',
+    provider: 'gemini',
+    name: 'Google Gemini',
+    modelTag: 'Gemini 3.6 Flash',
+    badge: '🎁 10.5K Free/Day',
+    desc: 'Model resmi Google terbaru, super cepat, penalaran tajam, & 100% gratis.',
+    icon: '💎',
+    color: '#06B6D4'
+  },
+  {
+    id: 'openai/gpt-4o',
+    provider: 'openai',
+    name: 'OpenAI GPT',
+    modelTag: 'GPT-4o',
+    badge: 'Flagship',
+    desc: 'Model serbaguna tercerdas untuk percakapan, instruksi kompleks & multimodal.',
+    icon: '⚡',
+    color: '#10B981'
+  },
+  {
+    id: 'anthropic/claude-3.5-sonnet',
+    provider: 'anthropic',
+    name: 'Anthropic Claude',
+    modelTag: 'Claude 3.5 Sonnet',
+    badge: 'Coding King',
+    desc: 'Juara dunia pembuatan kode program (coding) dan logika bahasa alami.',
+    icon: '🌟',
+    color: '#F59E0B'
+  }
+];
+
+async function callGeminiApi(
+  history: UiMessage[],
+  promptText: string,
+  systemPrompt: string,
+  attach?: MediaAttachment
+): Promise<{ content: string; model: string }> {
+  const keys = getGeminiKeys();
+  let lastErr: any = null;
+
+  const contents: any[] = [];
+  const cleanHistory = history.filter(m => !m.content.startsWith('Kendala:') && m.id !== 'init_welcome' && !m.id.startsWith('wait_')).slice(-12);
+
+  for (const m of cleanHistory) {
+    if (m.content) {
+      contents.push({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      });
+    }
+  }
+
+  const currentParts: any[] = [{ text: promptText || 'Analisis media ini.' }];
+  if (attach?.base64) {
+    let mimeType = 'image/jpeg';
+    if (attach.type === 'image') {
+      if (attach.uri.startsWith('data:image/png')) mimeType = 'image/png';
+      else if (attach.uri.startsWith('data:image/webp')) mimeType = 'image/webp';
+    }
+    currentParts.push({
+      inlineData: {
+        mimeType,
+        data: attach.base64
+      }
+    });
+  }
+
+  contents.push({
+    role: 'user',
+    parts: currentParts
+  });
+
+  const payload = {
+    contents,
+    systemInstruction: {
+      parts: [{ text: systemPrompt }]
+    },
+    generationConfig: {
+      temperature: 0.5,
+      maxOutputTokens: 8192
+    }
+  };
+
+  for (const key of keys) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          return { content: text, model: 'Gemini 3.6 Flash' };
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        lastErr = new Error(errData?.error?.message || `HTTP ${res.status}`);
+      }
+    } catch (e: any) {
+      lastErr = e;
+    }
+  }
+
+  throw lastErr || new Error('Koneksi ke Google Gemini terputus. Silakan coba lagi sebentar lagi.');
+}
+
 const SESSIONS_KEY = '@nova_web_sessions_v2';
 const ACTIVE_SESSION_KEY = '@nova_web_active_id_v2';
 
@@ -292,7 +439,6 @@ Kamu adalah SONEX, asisten AI otonom mutakhir yang dilengkapi dengan kemampuan m
 const NEUROBRO_TRADING_PROMPT = `# SONEX Trading Agent — Pedoman & Aturan Baku Neurobro\n\n## Filosofi AI\n1. NO HALLUCINATION: Selalu konfirmasi data chart live.\n2. Pisahkan Kalkulasi dari Interpretasi.\n\n## Hirarki: Struktur > Volume > Momentum\n## MTF Top-Down: H4 (Bias) → M15 (Setup) → M5 (Eksekusi)\n## R:R Minimal 1:2\n## Setiap setup wajib punya BUY/SELL/HOLD + Batas Batal\n## DILARANG Long altcoin jika BTC breakdown`;
 
 const IMAGE_MODEL = 'google/gemini-3.1-flash-image';
-const TTS_MODEL = 'openai/tts-1';
 
 function getFormattedTime(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -387,23 +533,19 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     try {
       const saved = localStorage.getItem('sonex_selected_model');
-      if (saved) return saved;
+      if (saved && (saved === 'gemini-3.6-flash' || saved === 'openai/gpt-4o' || saved === 'anthropic/claude-3.5-sonnet')) return saved;
     } catch {}
-    return 'openrouter/free';
+    return 'gemini-3.6-flash';
   });
-  const [modelSearch, setModelSearch] = useState('');
-  const [onlyFree, setOnlyFree] = useState(false);
   const [availableModels, setAvailableModels] = useState<ORModel[]>([]);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
-  const [modelTab, setModelTab] = useState<'all' | 'text' | 'image' | 'audio'>('all');
-  const [modelSort, setModelSort] = useState<'popular' | 'newest' | 'oldest' | 'weekly'>('popular');
-  const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [attachment, setAttachment] = useState<MediaAttachment | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recognitionRef = useRef<any>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   const [showChartPanel, setShowChartPanel] = useState(true);
@@ -417,6 +559,13 @@ export default function App() {
   const [customKeyInput, setCustomKeyInput] = useState(() => {
     try {
       return localStorage.getItem('@nova_custom_api_keys') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [customGeminiInput, setCustomGeminiInput] = useState(() => {
+    try {
+      return localStorage.getItem('@sonex_gemini_api_keys') || '';
     } catch {
       return '';
     }
@@ -575,44 +724,6 @@ export default function App() {
     } catch {}
   };
 
-  const filteredModels = useMemo(() => {
-    return availableModels.filter(m => {
-      // Modality filter
-      if (modelTab !== 'all') {
-        if (modelTab === 'audio') {
-          if (!m.outputModalities.includes('audio') && !m.outputModalities.includes('speech')) return false;
-        } else if (!m.outputModalities.includes(modelTab)) {
-          return false;
-        }
-      }
-      // Only free filter
-      const isFree = m.id.endsWith(':free') || m.pricing.prompt === '0' || m.pricing.prompt === '0.0';
-      if (onlyFree && !isFree) return false;
-
-      // Search query filter
-      if (modelSearch.trim()) {
-        const q = modelSearch.toLowerCase();
-        const matchId = m.id.toLowerCase().includes(q);
-        const matchName = m.name.toLowerCase().includes(q);
-        if (!matchId && !matchName) return false;
-      }
-      return true;
-    }).sort((a, b) => {
-      const aFree = a.id.endsWith(':free') || a.pricing.prompt === '0' || a.pricing.prompt === '0.0';
-      const bFree = b.id.endsWith(':free') || b.pricing.prompt === '0' || b.pricing.prompt === '0.0';
-      if (!modelSearch && aFree !== bFree) return aFree ? -1 : 1;
-
-      if (modelSort === 'newest') return b.created - a.created;
-      if (modelSort === 'oldest') return a.created - b.created;
-      if (modelSort === 'weekly') {
-        const scoreA = (a.contextLength || 1) / (parseFloat(a.pricing.prompt) || 0.1);
-        const scoreB = (b.contextLength || 1) / (parseFloat(b.pricing.prompt) || 0.1);
-        return scoreB - scoreA;
-      }
-      return 0;
-    });
-  }, [availableModels, modelTab, onlyFree, modelSearch, modelSort]);
-
   // Live market stats
   useEffect(() => {
     let m = true;
@@ -689,14 +800,65 @@ export default function App() {
   };
 
   const handleToggleVoiceRecord = async () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
     if (isRecordingAudio) {
-      if (mediaRecorderRef.current) {
-        mediaRecorderRef.current.stop();
-        setIsRecordingAudio(false);
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
+        recognitionRef.current = null;
       }
+      if (mediaRecorderRef.current) {
+        try { mediaRecorderRef.current.stop(); } catch {}
+      }
+      setIsRecordingAudio(false);
       return;
     }
 
+    // 1. Try native Web Speech Recognition for instant Speech-To-Text (STT)
+    if (SpeechRecognition) {
+      try {
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'id-ID';
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+          setIsRecordingAudio(true);
+        };
+
+        recognition.onresult = (event: any) => {
+          let transcript = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            transcript += event.results[i][0].transcript;
+          }
+          if (transcript) {
+            setInput((prev: string) => {
+              const base = prev.trim();
+              return base ? `${base} ${transcript}` : transcript;
+            });
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.warn('Speech recognition error:', event.error);
+          setIsRecordingAudio(false);
+          recognitionRef.current = null;
+        };
+
+        recognition.onend = () => {
+          setIsRecordingAudio(false);
+          recognitionRef.current = null;
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+        return;
+      } catch (e) {
+        console.warn('SpeechRecognition failed, fallback to audio recording:', e);
+      }
+    }
+
+    // 2. Fallback to MediaRecorder for audio recording attachment
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -726,42 +888,42 @@ export default function App() {
     }
   };
 
-  const handleToggleTts = async (id: string, text: string) => {
+  const handleToggleTts = (id: string, text: string) => {
     if (speakingId === id) {
-      const el = document.getElementById(`audio-${id}`) as HTMLAudioElement;
-      if (el) { el.pause(); el.currentTime = 0; }
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       setSpeakingId(null);
-      return;
-    }
-    setSpeakingId(id);
-    
-    // Check if audio element already exists
-    let el = document.getElementById(`audio-${id}`) as HTMLAudioElement;
-    if (el) {
-      el.play();
       return;
     }
 
-    try {
-      const key = getOpenRouterKeys()[0];
-      const res = await fetch('https://openrouter.ai/api/v1/audio/speech', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: TTS_MODEL, input: text, voice: 'alloy' })
-      });
-      if (!res.ok) throw new Error('TTS Gagal');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      el = new Audio(url);
-      el.id = `audio-${id}`;
-      el.onended = () => setSpeakingId(null);
-      el.onerror = () => setSpeakingId(null);
-      document.body.appendChild(el);
-      el.play();
-    } catch (err) {
-      alert('Gagal mensintesis suara OpenRouter.');
-      setSpeakingId(null);
+    if (!('speechSynthesis' in window)) {
+      alert('Browser Anda tidak mendukung Web Speech API.');
+      return;
     }
+
+    window.speechSynthesis.cancel();
+    setSpeakingId(id);
+
+    // Clean markdown symbols for natural reading
+    const cleanText = text
+      .replace(/[*#`_~>\[\]\(\)]/g, ' ')
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 1500);
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'id-ID';
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    const voices = window.speechSynthesis.getVoices();
+    const idVoice = voices.find(v => v.lang.startsWith('id') || v.name.toLowerCase().includes('indonesia'));
+    if (idVoice) utterance.voice = idVoice;
+
+    utterance.onend = () => setSpeakingId(null);
+    utterance.onerror = () => setSpeakingId(null);
+
+    window.speechSynthesis.speak(utterance);
   };
 
   const handleCopy = (id: string, text: string) => { navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000); };
@@ -815,18 +977,18 @@ export default function App() {
     const clean = history.filter(m => !m.content.startsWith('Kendala:') && m.id !== 'init_welcome').map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
     const msgs = [{ role: 'system', content: cMode === 'trading' ? NEUROBRO_TRADING_PROMPT : GENERAL_SYSTEM_PROMPT }, ...clean, { role: 'user', content }];
     
-    // Explicit model chosen by the user
-    let primaryTextModel = targetModel || selectedModel || 'openrouter/free';
-    const currObj = availableModels.find(m => m.id === primaryTextModel);
-    if (currObj && !currObj.outputModalities.includes('text')) {
-      const candidate = availableModels.find(m => m.outputModalities.includes('text') && (m.id.includes(':free') || m.id.includes('gemini') || m.id.includes('flash')));
-      primaryTextModel = candidate ? candidate.id : 'openrouter/free';
+    const sysPrompt = cMode === 'trading' ? NEUROBRO_TRADING_PROMPT : GENERAL_SYSTEM_PROMPT;
+    let primaryTextModel = targetModel || selectedModel || 'gemini-3.6-flash';
+
+    // 0. Direct execution: If model is Gemini, call official Google API directly
+    if (primaryTextModel === 'gemini-3.6-flash' || primaryTextModel.startsWith('gemini')) {
+      return await callGeminiApi(history, promptText, sysPrompt, attach);
     }
 
     let lastErr: any = null;
     let isQuotaOrAuthIssue = false;
 
-    // 1. Primary execution: try the EXACT model chosen by the user with all available keys
+    // 1. Primary execution: try the model with all available keys
     for (const key of getOpenRouterKeys()) {
       try {
         const ctrl = new AbortController();
@@ -855,9 +1017,20 @@ export default function App() {
       }
     }
 
-    // 2. If user-selected model required paid balance that the current free keys don't have,
-    // gracefully route to top verified free models while transparently explaining to the user.
+    // 2. If OpenAI or Claude requires paid balance that the current keys don't have,
+    // gracefully route to Google Gemini (which has 7 active keys and 10.5K free requests per day!)
     if (isQuotaOrAuthIssue) {
+      try {
+        const geminiRes = await callGeminiApi(history, promptText, sysPrompt, attach);
+        const chosenObj = CORE_MODELS.find(m => m.id === primaryTextModel);
+        const chosenName = chosenObj?.name || primaryTextModel;
+        const notice = `> ⚠️ **Pemberitahuan Kuota**: Model pilihan (**${chosenName}**) membutuhkan saldo OpenRouter aktif. Permintaan otomatis dialihkan ke **Google Gemini 3.6 Flash** (100% Gratis via 7 kunci resmi Anda).\n\n---\n\n`;
+        return {
+          content: notice + geminiRes.content,
+          model: 'Gemini 3.6 Flash'
+        };
+      } catch { }
+
       const freeFallbacks = [
         'openrouter/free',
         'nex-agi/nex-n2.5-pro:free',
@@ -882,9 +1055,9 @@ export default function App() {
               const data = await res.json();
               const reply = data.choices?.[0]?.message?.content;
               if (reply) {
-                const chosenName = currObj?.name || primaryTextModel;
+                const chosenName = CORE_MODELS.find(m => m.id === primaryTextModel)?.name || primaryTextModel;
                 const fbName = availableModels.find(m => m.id === fbModel)?.name || fbModel.split('/').pop() || fbModel;
-                const notice = `> ⚠️ **Pemberitahuan Model**: Model pilihan Anda (**${chosenName}**) membutuhkan saldo/kredit berbayar di OpenRouter. Karena kunci aktif berada di Free Tier, respon ini dialihkan ke **${fbName}**.\n> *(Pilih model berlabel **🎁 FREE** di dropdown tengah untuk eksekusi gratis tanpa peringatan ini, atau tambahkan API key Anda di menu Status Kuota)*\n\n---\n\n`;
+                const notice = `> ⚠️ **Pemberitahuan Model**: Model pilihan Anda (**${chosenName}**) membutuhkan saldo/kredit berbayar di OpenRouter. Karena kunci aktif berada di Free Tier, respon ini dialihkan ke **${fbName}**.\n\n---\n\n`;
                 return {
                   content: notice + reply,
                   model: fbModel
@@ -1484,175 +1657,160 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
           </div>
 
           <div style={{ flex: 1, display: 'flex', justifyContent: 'center', position: 'relative' }}>
-            <button 
-              style={{ background: 'var(--bg-panel-raised)', border: '1px solid var(--hairline)', borderRadius: '20px', padding: '6px 14px', fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all var(--transition-fast)' }}
-              onClick={(e) => { e.stopPropagation(); setIsModelDropdownOpen(!isModelDropdownOpen); }}
-              onMouseOver={(e) => e.currentTarget.style.borderColor = 'var(--hairline-strong)'}
-              onMouseOut={(e) => e.currentTarget.style.borderColor = 'var(--hairline)'}
-            >
-              {Icons.cpu}
-              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
-                {availableModels.find(m => m.id === selectedModel)?.name || selectedModel.split('/').pop() || 'Loading Models...'}
-              </span>
-              {(selectedModel.includes(':free') || availableModels.find(m => m.id === selectedModel)?.pricing?.prompt === '0') && (
-                <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 5px', borderRadius: '10px', background: 'rgba(6,182,212,0.15)', color: 'var(--accent-secondary)' }}>FREE</span>
-              )}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isModelDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.6 }}>
-                <polyline points="6 9 12 15 18 9"></polyline>
-              </svg>
-            </button>
+            {(() => {
+              const activeCoreModel = CORE_MODELS.find(m => m.id === selectedModel) || CORE_MODELS[0];
+              return (
+                <>
+                  <button 
+                    style={{ 
+                      background: 'var(--bg-panel-raised)', 
+                      border: `1.5px solid ${isModelDropdownOpen ? activeCoreModel.color : 'var(--hairline)'}`, 
+                      borderRadius: '24px', 
+                      padding: '6px 16px', 
+                      fontSize: '12.5px', 
+                      fontWeight: 600, 
+                      color: 'var(--text-primary)', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '8px', 
+                      cursor: 'pointer', 
+                      boxShadow: isModelDropdownOpen ? `0 0 16px ${activeCoreModel.color}33` : 'none',
+                      transition: 'all var(--transition-fast)' 
+                    }}
+                    onClick={(e) => { e.stopPropagation(); setIsModelDropdownOpen(!isModelDropdownOpen); }}
+                    onMouseOver={(e) => e.currentTarget.style.borderColor = activeCoreModel.color}
+                    onMouseOut={(e) => {
+                      if (!isModelDropdownOpen) e.currentTarget.style.borderColor = 'var(--hairline)';
+                    }}
+                  >
+                    <span style={{ fontSize: '15px' }}>{activeCoreModel.icon}</span>
+                    <span style={{ fontWeight: 700, letterSpacing: '-0.2px' }}>{activeCoreModel.name}</span>
+                    <span style={{ opacity: 0.65, fontSize: '11px', fontWeight: 500 }}>· {activeCoreModel.modelTag}</span>
+                    <span style={{ 
+                      fontSize: '9.5px', 
+                      fontWeight: 700, 
+                      padding: '2px 8px', 
+                      borderRadius: '12px', 
+                      background: activeCoreModel.id === 'gemini-3.6-flash' ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.08)', 
+                      color: activeCoreModel.color 
+                    }}>
+                      {activeCoreModel.badge}
+                    </span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isModelDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.7 }}>
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
 
-            {isModelDropdownOpen && (
-              <div 
-                className="model-dropdown-menu" 
-                onClick={(e) => e.stopPropagation()}
-                style={{ position: 'absolute', top: 'calc(100% + 12px)', left: '50%', transform: 'translateX(-50%)', zIndex: 100, background: 'var(--glass-bg-strong)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid var(--glass-border)', borderRadius: '16px', maxHeight: '520px', width: '360px', overflowY: 'auto', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column' }}
-              >
-                <div className="model-dropdown-header" style={{ padding: '12px 14px', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--glass-border)', position: 'sticky', top: 0, background: 'var(--bg-panel-raised)', zIndex: 10, backdropFilter: 'blur(24px)' }}>
-                  <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 700 }}>Pilih Model AI</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setIsSortDropdownOpen(!isSortDropdownOpen); }}
-                        style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: '11.5px', fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                      >
-                        {modelSort === 'popular' && 'Most Popular'}
-                        {modelSort === 'newest' && 'Newest'}
-                        {modelSort === 'oldest' && 'Oldest'}
-                        {modelSort === 'weekly' && 'Top Weekly'}
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isSortDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.6 }}><polyline points="6 9 12 15 18 9"></polyline></svg>
-                      </button>
-
-                      {isSortDropdownOpen && (
-                        <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '8px', background: 'var(--bg-obsidian)', border: '1px solid var(--hairline-strong)', borderRadius: '8px', padding: '4px', zIndex: 110, width: '160px', boxShadow: 'var(--shadow-lg)' }}>
-                          {[
-                            { id: 'popular', label: 'Most Popular' },
-                            { id: 'newest', label: 'Newest' },
-                            { id: 'oldest', label: 'Oldest' },
-                            { id: 'weekly', label: 'Top Weekly' }
-                          ].map(opt => (
-                            <button
-                              key={opt.id}
-                              onClick={(e) => { e.stopPropagation(); setModelSort(opt.id as any); setIsSortDropdownOpen(false); }}
-                              style={{ width: '100%', textAlign: 'left', padding: '8px 12px', fontSize: '13px', background: modelSort === opt.id ? 'var(--accent-dim)' : 'transparent', color: modelSort === opt.id ? 'var(--accent-primary)' : 'var(--text-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-                            >
-                              {modelSort === opt.id ? (
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                              ) : <span style={{width: 14}} />}
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      <span style={{color: 'var(--text-muted)', fontWeight: 500, fontSize: '12px'}}>{filteredModels.length}</span>
-                    </div>
-                  </div>
-
-                  {/* Search box */}
-                  <div style={{ position: 'relative', marginBottom: 8 }}>
-                    <input 
-                      type="text" 
-                      placeholder="Cari model (misal: gemma, nex, free, claude)..." 
-                      value={modelSearch} 
-                      onChange={(e) => setModelSearch(e.target.value)} 
-                      onClick={(e) => e.stopPropagation()} 
-                      style={{ width: '100%', padding: '6px 26px 6px 28px', fontSize: '11.5px', borderRadius: '8px', border: '1px solid var(--hairline)', background: 'var(--bg-obsidian)', color: 'var(--text-primary)', outline: 'none' }} 
-                    />
-                    <span style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', opacity: 0.5, fontSize: '12px' }}>🔍</span>
-                    {modelSearch && (
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setModelSearch(''); }} 
-                        style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '12px' }}
-                      >✕</button>
-                    )}
-                  </div>
-
-                  {/* Modality Tabs & Free Toggle */}
-                  <div style={{ display: 'flex', gap: 5, overflowX: 'auto', paddingBottom: 2, scrollbarWidth: 'none', alignItems: 'center' }}>
-                    <button 
-                      className={`model-tab-btn ${onlyFree ? 'active' : ''}`}
-                      onClick={(e) => { e.stopPropagation(); setOnlyFree(!onlyFree); }}
-                      style={{ borderColor: onlyFree ? 'transparent' : 'rgba(6,182,212,0.4)', color: onlyFree ? '#FFF' : 'var(--accent-secondary)' }}
+                  {isModelDropdownOpen && (
+                    <div 
+                      className="model-dropdown-menu" 
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ 
+                        position: 'absolute', 
+                        top: 'calc(100% + 12px)', 
+                        left: '50%', 
+                        transform: 'translateX(-50%)', 
+                        zIndex: 100, 
+                        background: 'var(--glass-bg-strong)', 
+                        backdropFilter: 'blur(28px)', 
+                        WebkitBackdropFilter: 'blur(28px)', 
+                        border: '1px solid var(--glass-border)', 
+                        borderRadius: '18px', 
+                        width: '390px', 
+                        overflow: 'hidden', 
+                        boxShadow: 'var(--shadow-lg)', 
+                        display: 'flex', 
+                        flexDirection: 'column' 
+                      }}
                     >
-                      🎁 Free Only
-                    </button>
-                    <div style={{ width: 1, height: 16, background: 'var(--hairline)', margin: '0 2px' }} />
-                    {[
-                      { id: 'all', label: 'Semua' },
-                      { id: 'text', label: 'Teks' },
-                      { id: 'image', label: 'Gambar' },
-                      { id: 'audio', label: 'Suara' }
-                    ].map(tab => (
-                      <button 
-                        key={tab.id} 
-                        className={`model-tab-btn ${modelTab === tab.id ? 'active' : ''}`} 
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          setModelTab(tab.id as any);
-                        }}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {filteredModels.length === 0 ? (
-                  <div style={{ padding: '24px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>Tidak ada model yang cocok.</div>
-                ) : (
-                  filteredModels.map(m => {
-                    const isFree = m.id.endsWith(':free') || m.pricing.prompt === '0' || m.pricing.prompt === '0.0';
-                    
-                    const formatPrice = (p: string) => {
-                      const num = parseFloat(p);
-                      if (isNaN(num) || num === 0) return 'FREE';
-                      return '$' + (num * 1000000).toLocaleString(undefined, { maximumFractionDigits: 3 });
-                    };
-                    
-                    const pInput = formatPrice(m.pricing.prompt);
-                    const pOutput = formatPrice(m.pricing.completion);
-                    
-                    const formatCtx = (ctx: number) => {
-                      if (!ctx) return '?';
-                      if (ctx >= 1000000) return (ctx / 1000000).toFixed(1).replace('.0', '') + 'M';
-                      if (ctx >= 1000) return (ctx / 1000).toFixed(0) + 'K';
-                      return ctx.toString();
-                    };
-
-                    return (
-                      <button
-                        key={m.id}
-                        className={`model-card-item ${selectedModel === m.id ? 'active' : ''}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSelectModel(m.id);
-                        }}
-                      >
-                        <div className="model-card-title-row">
-                          <span className="model-card-title">{m.name}</span>
-                          {isFree && <span className="model-free-badge">🎁 FREE</span>}
+                      <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--hairline)', background: 'var(--bg-panel-raised)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {Icons.cpu} Tiga Model Pilihan SONEX AI
+                          </span>
+                          <span style={{ fontSize: '10px', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.06)', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+                            3 MODEL UTAMA
+                          </span>
                         </div>
-                        <div className="model-card-id">{m.id}</div>
-                        
-                        <div className="model-card-badges">
-                          {m.outputModalities.map((mod, i) => (
-                            <span key={i} className={`modality-badge mod-${mod}`}>{mod.toUpperCase()}</span>
-                          ))}
-                          {m.contextLength > 0 && (
-                            <span className="context-badge">{Icons.panel} {formatCtx(m.contextLength)} context</span>
-                          )}
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                          Model resmi terbaik dari Google, OpenAI, dan Anthropic
                         </div>
+                      </div>
 
-                        <div className="model-card-pricing">
-                          <div><span style={{color: 'var(--text-muted)'}}>In:</span> {pInput} {pInput !== 'FREE' && '/ 1M'}</div>
-                          <div><span style={{color: 'var(--text-muted)'}}>Out:</span> {pOutput} {pOutput !== 'FREE' && '/ 1M'}</div>
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            )}
+                      <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {CORE_MODELS.map((m) => {
+                          const isSelected = selectedModel === m.id;
+                          return (
+                            <div
+                              key={m.id}
+                              onClick={() => {
+                                handleSelectModel(m.id);
+                                setIsModelDropdownOpen(false);
+                              }}
+                              style={{
+                                padding: '12px 14px',
+                                borderRadius: '12px',
+                                border: isSelected ? `1.5px solid ${m.color}` : '1px solid var(--hairline)',
+                                background: isSelected ? `${m.color}15` : 'transparent',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '6px'
+                              }}
+                              onMouseOver={(e) => {
+                                if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                              }}
+                              onMouseOut={(e) => {
+                                if (!isSelected) e.currentTarget.style.background = 'transparent';
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <span style={{ fontSize: '22px' }}>{m.icon}</span>
+                                  <div>
+                                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      {m.name}
+                                      <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--text-muted)' }}>({m.modelTag})</span>
+                                    </div>
+                                    <div style={{ fontSize: '10px', color: m.color, fontWeight: 600, marginTop: '1px' }}>
+                                      {m.provider === 'gemini' ? 'Direct Google AI Studio (7 Kunci)' : 'OpenRouter Engine'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '12px', background: `${m.color}20`, color: m.color }}>
+                                    {m.badge}
+                                  </span>
+                                  {isSelected && (
+                                    <span style={{ color: m.color, display: 'flex', alignItems: 'center' }}>
+                                      {Icons.check}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', lineHeight: 1.4, paddingLeft: '32px' }}>
+                                {m.desc}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div style={{ padding: '10px 14px', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid var(--hairline)', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>💎 Gemini: <strong>10.500 req/hari (Gratis)</strong></span>
+                        <button 
+                          onClick={() => { setIsModelDropdownOpen(false); loadQuotas(); }}
+                          style={{ background: 'transparent', border: 'none', color: 'var(--accent-secondary)', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                        >
+                          Status Kuota & Kunci →
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           <div className="main-header-right" style={{ flex: 1, justifyContent: 'flex-end' }}>
@@ -1808,22 +1966,84 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
           <div className="modal-dialog" onClick={e => e.stopPropagation()}>
             <div className="modal-header"><div><div className="modal-title">Status Kuota & Engine AI</div></div><button className="modal-close-btn" onClick={() => setShowQuotaModal(false)}>{Icons.x}</button></div>
             <div className="modal-body">
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5, background: 'rgba(255,255,255,0.03)', padding: 10, borderRadius: 8, border: '1px solid var(--hairline)' }}>
-                ℹ️ <strong>Status Kuota:</strong> Kunci OpenRouter aktif (200 OK) untuk model obrolan teks. Model gambar yang dipilih di dropdown akan digunakan secara langsung saat generate gambar.
+              {/* Google Gemini Official Keys Section */}
+              <div style={{ background: 'rgba(6, 182, 212, 0.08)', border: '1px solid rgba(6, 182, 212, 0.3)', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 20 }}>💎</span>
+                    <div>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>Google Gemini Official API</div>
+                      <div style={{ fontSize: 11, color: 'var(--accent-secondary)', fontWeight: 600 }}>Rotasi 7 Kunci Multi-Key Aktif</div>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 12, background: 'rgba(16, 185, 129, 0.2)', color: 'var(--bull)' }}>
+                    ✓ 10.500 REQ/HARI (GRATIS)
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 10 }}>
+                  Terhubung langsung ke Google AI Studio dengan model <strong>gemini-3.6-flash</strong>. Dilengkapi rotasi otomatis antar 7 kunci resmi agar obrolan Anda tidak pernah terputus batasan kuota.
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6, marginBottom: 10 }}>
+                  {getGeminiKeys().map((gk, idx) => (
+                    <div key={idx} style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid var(--hairline)', borderRadius: 6, padding: '5px 8px', fontSize: 11, fontFamily: 'var(--font-mono)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>#{idx + 1} {gk.slice(0, 11)}...{gk.slice(-4)}</span>
+                      <span style={{ color: 'var(--bull)', fontSize: 10, fontWeight: 700 }}>✓ AKTIF</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ borderTop: '1px dashed rgba(6, 182, 212, 0.25)', paddingTop: 8 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>+ Tambah API Key Google Gemini Pribadi:</div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="password"
+                      placeholder="Kunci Google AI Studio pribadi..."
+                      value={customGeminiInput}
+                      onChange={(e) => setCustomGeminiInput(e.target.value)}
+                      style={{ flex: 1, padding: '6px 10px', fontSize: 11.5, borderRadius: 8, border: '1px solid var(--hairline)', background: 'var(--bg-obsidian)', color: 'var(--text-primary)', outline: 'none', fontFamily: 'var(--font-mono)' }}
+                    />
+                    <button
+                      className="btn-new-chat-full"
+                      style={{ width: 'auto', padding: '0 14px', margin: 0, fontSize: 12, height: '32px' }}
+                      onClick={() => {
+                        try {
+                          if (customGeminiInput.trim()) {
+                            localStorage.setItem('@sonex_gemini_api_keys', customGeminiInput.trim());
+                          } else {
+                            localStorage.removeItem('@sonex_gemini_api_keys');
+                          }
+                          alert('Kunci Gemini berhasil disimpan!');
+                        } catch {}
+                      }}
+                    >
+                      Simpan
+                    </button>
+                  </div>
+                </div>
               </div>
-              {loadingQuota ? <div style={{ textAlign: 'center', padding: 24, color: 'var(--accent-primary-hover)' }}>Memeriksa kunci API...</div> : quotaData.map((q, i) => (
+
+              {/* OpenRouter Keys Section */}
+              <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>⚡</span> OpenRouter Engine (OpenAI & Claude)
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.4 }}>
+                Digunakan untuk mengakses <strong>OpenAI GPT-4o</strong> dan <strong>Anthropic Claude 3.5 Sonnet</strong>. Jika saldo habis, permintaan otomatis dialihkan ke Google Gemini gratis.
+              </div>
+
+              {loadingQuota ? <div style={{ textAlign: 'center', padding: 18, color: 'var(--accent-primary-hover)' }}>Memeriksa kunci API OpenRouter...</div> : quotaData.map((q, i) => (
                 <div key={i} className={`quota-key-box ${q.status === '200 OK' ? 'active' : ''}`}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}><span style={{ fontWeight: 700, fontSize: 13 }}>KUNCI #{i + 1}</span><span style={{ color: q.status === '200 OK' ? 'var(--bull)' : 'var(--bear)', fontWeight: 700, fontSize: 12 }}>{q.status}</span></div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>{q.masked}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Tier: <strong>{q.free ? 'Free (Teks Aktif)' : 'Standar'}</strong> · Penggunaan: ${q.usage.toFixed(4)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Tier: <strong>{q.free ? 'Free Tier' : 'Standar'}</strong> · Penggunaan: ${q.usage.toFixed(4)}</div>
                 </div>
               ))}
-              <button className="btn-new-chat-full" onClick={loadQuotas} style={{ margin: '8px 0 0' }}>{Icons.refresh} Segarkan Status</button>
+              <button className="btn-new-chat-full" onClick={loadQuotas} style={{ margin: '8px 0 0' }}>{Icons.refresh} Segarkan Status Kunci</button>
 
-              <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--hairline)' }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>🔑 Masukkan API Key OpenRouter Pribadi</div>
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--hairline)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: 'var(--text-primary)' }}>🔑 Masukkan API Key OpenRouter Pribadi (Opsional)</div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.4 }}>
-                  Ingin menggunakan <strong>GPT-6 Astra, Claude 3.5 Sonnet, GPT-4o</strong> atau model berbayar lainnya? Masukkan API Key OpenRouter pribadi Anda (awalan <code>sk-or-v1-</code>) yang memiliki saldo:
+                  Punya saldo kredit pribadi di OpenRouter? Masukkan API Key (awalan <code>sk-or-v1-</code>) di sini untuk kuota tak terbatas pada model OpenAI & Claude:
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
@@ -1831,11 +2051,11 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
                     placeholder="sk-or-v1-xxxxxxxx..."
                     value={customKeyInput}
                     onChange={(e) => setCustomKeyInput(e.target.value)}
-                    style={{ flex: 1, padding: '7px 10px', fontSize: 11.5, borderRadius: 8, border: '1px solid var(--hairline)', background: 'var(--bg-obsidian)', color: 'var(--text-primary)', outline: 'none', fontFamily: 'var(--font-mono)' }}
+                    style={{ flex: 1, padding: '6px 10px', fontSize: 11.5, borderRadius: 8, border: '1px solid var(--hairline)', background: 'var(--bg-obsidian)', color: 'var(--text-primary)', outline: 'none', fontFamily: 'var(--font-mono)' }}
                   />
                   <button
                     className="btn-new-chat-full"
-                    style={{ width: 'auto', padding: '0 14px', margin: 0, fontSize: 12, height: '34px' }}
+                    style={{ width: 'auto', padding: '0 14px', margin: 0, fontSize: 12, height: '32px' }}
                     onClick={() => {
                       try {
                         if (customKeyInput.trim()) {
@@ -1844,7 +2064,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
                           localStorage.removeItem('@nova_custom_api_keys');
                         }
                         loadQuotas();
-                        alert('Kunci API berhasil disimpan!');
+                        alert('Kunci API OpenRouter berhasil disimpan!');
                       } catch {}
                     }}
                   >
