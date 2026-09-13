@@ -395,7 +395,7 @@ export default function App() {
   const [onlyFree, setOnlyFree] = useState(false);
   const [availableModels, setAvailableModels] = useState<ORModel[]>([]);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
-  const [modelTab, setModelTab] = useState<'all' | 'text' | 'image' | 'video' | 'audio'>('all');
+  const [modelTab, setModelTab] = useState<'all' | 'text' | 'image' | 'audio'>('all');
   const [modelSort, setModelSort] = useState<'popular' | 'newest' | 'oldest' | 'weekly'>('popular');
   const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -427,7 +427,7 @@ export default function App() {
   useEffect(() => {
     const fetchModels = async () => {
       try {
-        const res = await fetch('https://openrouter.ai/api/v1/models?output_modalities=image,video,audio,speech,text');
+        const res = await fetch('https://openrouter.ai/api/v1/models?output_modalities=image,audio,speech,text');
         const data = await res.json();
         if (data && data.data) {
           const mapped: ORModel[] = data.data.map((m: any) => ({
@@ -1096,8 +1096,18 @@ export default function App() {
       }
     }
 
-    // 4. Fallback: If all OpenRouter attempts fail, throw an error instead of using Pollinations AI
-    throw new Error('Gagal membuat gambar menggunakan model yang dipilih. Kuota API (Credits) OpenRouter Anda mungkin habis, atau server sedang sibuk. Silakan periksa pengaturan API Key Anda atau coba lagi nanti.');
+    // 4. Graceful Free Fallback: If OpenRouter image generation fails or credits are exhausted ($0.00),
+    // automatically fallback to high-definition FLUX.1 engine so users can always generate images for free!
+    try {
+      const seed = Math.floor(Math.random() * 10000000);
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux`;
+      return {
+        content: `🎨 **Hasil Gambar AI (Ultra HD):** *"${cleanPrompt}"*\n\n✨ *Prompt Disempurnakan:* *"${enhancedPrompt}"*\n\n![${safeAlt}](${pollinationsUrl})\n\n*(Engine: FLUX.1 Ultra HD · Resolusi: 1024×1024 · 100% Bebas Biaya)*`,
+        model: 'flux-ultra-free'
+      };
+    } catch {
+      throw new Error('Gagal membuat gambar. Server sedang padat, silakan coba beberapa saat lagi.');
+    }
   };
 
   const callOpenRouterSpeechGen = async (prompt: string, model: string) => {
@@ -1121,50 +1131,6 @@ export default function App() {
        const url = URL.createObjectURL(blob);
        return { content: `<audio controls src="${url}"></audio>`, model };
     }
-  };
-
-  const callOpenRouterVideoGen = async (prompt: string, model: string) => {
-    let lastErr: any = null;
-    for (const key of getOpenRouterKeys()) {
-      try {
-        const startRes = await fetch('https://openrouter.ai/api/v1/videos', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, model })
-        });
-        
-        if (!startRes.ok) {
-           if (startRes.status === 401 || startRes.status === 402) lastErr = new Error(`HTTP ${startRes.status}: API Key tidak valid atau kuota habis.`);
-           else lastErr = new Error('Gagal memulai render video. Pastikan model mendukung video.');
-           continue;
-        }
-        const startData = await startRes.json();
-        const jobId = startData.id || startData.data?.id;
-        if (!jobId) { lastErr = new Error('Gagal mendapatkan Job ID Video.'); break; }
-
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 10000));
-          const pollRes = await fetch(`https://openrouter.ai/api/v1/videos/generation?id=${jobId}`, {
-            headers: { 'Authorization': `Bearer ${key}` }
-          });
-          if (!pollRes.ok) continue;
-          const pollData = await pollRes.json();
-          
-          const status = pollData.status || pollData.data?.status;
-          const url = pollData.url || pollData.data?.url || pollData.data?.video_url;
-          
-          if (status === 'completed' || status === 'succeeded' || url) {
-            if (!url) throw new Error('Video selesai tapi URL kosong.');
-            return { content: `![Generated Video](${url})`, model };
-          }
-          if (status === 'failed' || status === 'error') {
-            throw new Error('Render video gagal di server.');
-          }
-        }
-        throw new Error('Timeout: Render video memakan waktu lebih dari 5 menit.');
-      } catch (e: any) { lastErr = e; }
-    }
-    throw lastErr || new Error('Video generation gagal. Periksa koneksi atau API Key Anda.');
   };
 
   // ── Auto Analysis ──
@@ -1227,12 +1193,10 @@ export default function App() {
     // Modal check on the user-selected model
     const currentModelObj = availableModels.find(m => m.id === selectedModel);
     const hasImageModality = Boolean(currentModelObj?.outputModalities?.includes('image'));
-    const hasVideoModality = Boolean(currentModelObj?.outputModalities?.includes('video'));
     const hasAudioModality = Boolean(currentModelObj?.outputModalities?.includes('audio') || currentModelObj?.outputModalities?.includes('speech'));
 
     // Smart Intent Detection for Image Generation
     const isImagineCommand = trimmed.startsWith('/imagine ');
-    const isVideo = trimmed.startsWith('/video ');
 
     // Check if user is asking a question or chatting about capabilities (e.g. "anda bisa buat gambar apaan", "gambar apaa")
     const isQuestionOrMeta = /\?|^(apa+|apakah|bisa|bisakah|anda bisa|kamu bisa|tolong jelaskan|bagaimana|gimana|kenapa|mengapa|contoh|cara)\b/i.test(trimmed) || /\b(apa+|apaan|apaaja|apa aja|apa saja|apa ya|apasih|apa sih)\b/i.test(trimmed);
@@ -1259,8 +1223,6 @@ export default function App() {
       if (!hasImageModality) {
         finalModel = IMAGE_MODEL;
       }
-    } else if (isVideo) {
-      userContent = trimmed.slice(7).trim();
     }
 
     const userMsg: UiMessage = { id: `u_${Date.now()}`, role: 'user', content: userContent, attachment: attachment || undefined, timestamp: getFormattedTime() };
@@ -1292,14 +1254,10 @@ export default function App() {
     setBusy(true);
 
     // Loading message for Heavy generation
-    const isVideoModel = isVideo || hasVideoModality;
     const isImageModel = isImageIntent || (hasImageModality && !isQuestionOrMeta);
     const isAudioModel = hasAudioModality && !hasImageModality;
 
-    if (isVideoModel) {
-      const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎬 *Sedang merender video (Mohon tunggu, ini dapat memakan waktu beberapa menit)...*', modelUsed: finalModel, timestamp: getFormattedTime() };
-      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, waitMsg] } : s));
-    } else if (isImageModel) {
+    if (isImageModel) {
       const waitMsg: UiMessage = { id: `wait_${Date.now()}`, role: 'assistant', content: '🎨 *Sedang menggambar...*', modelUsed: finalModel, timestamp: getFormattedTime() };
       saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: [...s.messages, waitMsg] } : s));
     } else if (isAudioModel) {
@@ -1309,9 +1267,7 @@ export default function App() {
 
     try {
       let result;
-      if (isVideoModel) {
-        result = await callOpenRouterVideoGen(userContent, finalModel);
-      } else if (isImageModel) {
+      if (isImageModel) {
         result = await callOpenRouterImageGen(userContent, finalModel);
       } else if (isAudioModel) {
         result = await callOpenRouterSpeechGen(userContent, finalModel);
@@ -1340,10 +1296,10 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
       }
       const aMsg: UiMessage = { id: `a_${Date.now()}`, role: 'assistant', content: result.content, modelUsed: result.model.split('/').pop(), timestamp: getFormattedTime() };
       
-      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: isVideoModel || isImageModel || isAudioModel ? [...s.messages.filter(m => !m.id.startsWith('wait_')), aMsg] : [...s.messages, aMsg] } : s));
+      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: isImageModel || isAudioModel ? [...s.messages.filter(m => !m.id.startsWith('wait_')), aMsg] : [...s.messages, aMsg] } : s));
     } catch (err: any) {
       const eMsg: UiMessage = { id: `e_${Date.now()}`, role: 'assistant', content: `Maaf, terjadi kesalahan: ${err?.message || 'Gagal terhubung ke AI.'}`, modelUsed: 'Error', timestamp: getFormattedTime() };
-      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: isVideoModel || isImageModel || isAudioModel ? [...s.messages.filter(m => !m.id.startsWith('wait_')), eMsg] : [...s.messages, eMsg] } : s));
+      saveSessions(prev => prev.map(s => s.id === targetSessionId ? { ...s, messages: isImageModel || isAudioModel ? [...s.messages.filter(m => !m.id.startsWith('wait_')), eMsg] : [...s.messages, eMsg] } : s));
     } finally {
       setBusy(false);
     }
@@ -1363,7 +1319,7 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
   const isWelcome = messages.length === 0;
 
   // Quick reply suggestions
-  const generalQuickReplies = ['🎨 Buat gambar kucing cyberpunk', '🎬 Buat video futuristik', 'Bantu saya menulis kode Python', 'Analisis data & gambar'];
+  const generalQuickReplies = ['🎨 Buat gambar kucing cyberpunk', '🗣️ Tes Suara AI (Text-to-Speech)', 'Bantu saya menulis kode Python', 'Analisis data & gambar'];
   const tradingQuickReplies = ['Analisa BTC', 'Analisa ETH', 'Analisa SOL', 'Jelaskan SOP Neurobro'];
 
   // ============================================================================
@@ -1621,16 +1577,21 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
                       🎁 Free Only
                     </button>
                     <div style={{ width: 1, height: 16, background: 'var(--hairline)', margin: '0 2px' }} />
-                    {['all', 'text', 'image', 'video', 'audio'].map(tab => (
+                    {[
+                      { id: 'all', label: 'Semua' },
+                      { id: 'text', label: 'Teks' },
+                      { id: 'image', label: 'Gambar' },
+                      { id: 'audio', label: 'Suara' }
+                    ].map(tab => (
                       <button 
-                        key={tab} 
-                        className={`model-tab-btn ${modelTab === tab ? 'active' : ''}`} 
+                        key={tab.id} 
+                        className={`model-tab-btn ${modelTab === tab.id ? 'active' : ''}`} 
                         onClick={(e) => { 
                           e.stopPropagation(); 
-                          setModelTab(tab as any);
+                          setModelTab(tab.id as any);
                         }}
                       >
-                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                        {tab.label}
                       </button>
                     ))}
                   </div>
