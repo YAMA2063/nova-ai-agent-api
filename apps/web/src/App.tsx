@@ -1228,9 +1228,13 @@ Saya bisa membuat berbagai macam gaya gambar visual, antara lain:
             </div>
           </div>
           <span className="brand-version">PRO</span>
-          {isMobile && (
-            <button className="sidebar-close-btn" onClick={(e) => { e.stopPropagation(); setSidebarOpen(false); }} title="Tutup">{Icons.x}</button>
-          )}
+          <button 
+            className="sidebar-collapse-btn" 
+            onClick={(e) => { e.stopPropagation(); if (isMobile) setSidebarOpen(false); else setSidebarMini(true); }}
+            title={isMobile ? 'Tutup' : 'Ciutkan Sidebar'}
+          >
+            {isMobile ? Icons.x : Icons.panel}
+          </button>
         </div>
 
         {/* Mini Icons (Gemini-style action stack when collapsed) */}
