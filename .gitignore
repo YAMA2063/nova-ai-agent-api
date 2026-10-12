@@ -8,3 +8,5 @@ coverage
 *.log
 android/.gradle
 ios/Pods
+data/
+*.local
